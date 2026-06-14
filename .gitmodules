@@ -1,0 +1,3 @@
+[submodule "safa-build"]
+	path = safa-build
+	url = https://github.com/SafaOS/cross-c-utils

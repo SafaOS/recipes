@@ -1,0 +1,2180 @@
+From aca7e954a91e4910cac6976373bb17192398d741 Mon Sep 17 00:00:00 2001
+From: safiworks <116169309+safiworks@users.noreply.github.com>
+Date: Sun, 14 Jun 2026 23:42:29 +0300
+Subject: [PATCH] feat: SafaOS support
+
+---
+ CMakeLists.txt                           |  29 +-
+ build-scripts/config.sub                 |   1 +
+ cmake/sdlplatform.cmake                  |   2 +
+ include/SDL_config.h.cmake               |   2 +
+ include/SDL_platform.h                   |   4 +
+ sdl-safaos/.gitignore                    |   2 +
+ sdl-safaos/Cargo.lock                    | 585 +++++++++++++++++++++++
+ sdl-safaos/Cargo.toml                    |  12 +
+ sdl-safaos/build.sh                      |  17 +
+ sdl-safaos/src/audio.rs                  |  59 +++
+ sdl-safaos/src/lib.rs                    |  16 +
+ sdl-safaos/src/video.rs                  | 389 +++++++++++++++
+ sdl-safaos/src/video/defs.rs             | 180 +++++++
+ sdl-safaos/src/video/sdl_scancode.rs     |  95 ++++
+ src/audio/SDL_audio.c                    |   3 +
+ src/audio/SDL_sysaudio.h                 |   1 +
+ src/audio/safaos/SDL_safaosaudio.c       | 104 ++++
+ src/audio/safaos/SDL_safaosaudio.h       |  37 ++
+ src/dynapi/SDL_dynapi.h                  |   2 +
+ src/file/SDL_rwops.c                     |   4 +-
+ src/joystick/SDL_steam_virtual_gamepad.c |   4 +-
+ src/stdlib/SDL_malloc.c                  |   9 +
+ src/thread/pthread/SDL_syssem.c          |   2 +-
+ src/thread/pthread/SDL_systhread.c       |   8 +-
+ src/thread/pthread/SDL_systls.c          |   4 +
+ src/timer/safaos/SDL_systimer.c          |  81 ++++
+ src/video/SDL_sysvideo.h                 |   1 +
+ src/video/SDL_video.c                    |   3 +
+ src/video/safaos/SDL_safaosvideo.c       | 161 +++++++
+ 29 files changed, 1808 insertions(+), 9 deletions(-)
+ create mode 100644 sdl-safaos/.gitignore
+ create mode 100644 sdl-safaos/Cargo.lock
+ create mode 100644 sdl-safaos/Cargo.toml
+ create mode 100755 sdl-safaos/build.sh
+ create mode 100644 sdl-safaos/src/audio.rs
+ create mode 100644 sdl-safaos/src/lib.rs
+ create mode 100644 sdl-safaos/src/video.rs
+ create mode 100644 sdl-safaos/src/video/defs.rs
+ create mode 100644 sdl-safaos/src/video/sdl_scancode.rs
+ create mode 100644 src/audio/safaos/SDL_safaosaudio.c
+ create mode 100644 src/audio/safaos/SDL_safaosaudio.h
+ create mode 100644 src/timer/safaos/SDL_systimer.c
+ create mode 100644 src/video/safaos/SDL_safaosvideo.c
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8e5fb1c..23b1072 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -359,7 +359,7 @@ if(EMSCRIPTEN)
+   set(SDL_CPUINFO_ENABLED_BY_DEFAULT OFF)
+ endif()
+ 
+-if(VITA OR PSP OR PS2 OR N3DS)
++if(VITA OR PSP OR PS2 OR N3DS OR SAFAOS)
+   set(SDL_SHARED_ENABLED_BY_DEFAULT OFF)
+   set(SDL_LOADSO_ENABLED_BY_DEFAULT OFF)
+ endif()
+@@ -1411,7 +1411,34 @@ if(ANDROID)
+   if(SDL_CLOCK_GETTIME)
+     set(HAVE_CLOCK_GETTIME 1)
+   endif()
++elseif(SAFAOS)
++  list(APPEND EXTRA_LIBS SafaSDL)
+ 
++  if(SDL_VIDEO)
++    set(SDL_VIDEO_DRIVER_SAFAOS 1)
++    file(GLOB VIDEO_SOURCES ${SDL2_SOURCE_DIR}/src/video/safaos/*.c)
++    list(APPEND SOURCE_FILES ${VIDEO_SOURCES})
++    set(HAVE_SDL_VIDEO TRUE)
++  endif()
++
++  if(SDL_AUDIO)
++    set(SDL_AUDIO_DRIVER_SAFAOS 1)
++    file(GLOB AUDIO_SOURCES ${SDL2_SOURCE_DIR}/src/audio/safaos/*.c)
++    list(APPEND SOURCE_FILES ${AUDIO_SOURCES})
++    set(HAVE_SDL_AUDIO TRUE)
++  endif()
++
++  if(SDL_TIMERS)
++    file(GLOB TIMER_SOURCES ${SDL2_SOURCE_DIR}/src/timer/safaos/*.c)
++    list(APPEND SOURCE_FILES ${TIMER_SOURCES})
++    set(HAVE_SDL_TIMERS TRUE)
++  endif()
++
++  set(SDL_PTHREADS 1)
++  set(SDL_THREADS 1)
++  CheckPTHREAD()
++
++  message_warn("HAVE_SDL_THREADS=${HAVE_SDL_THREADS}, OS=${CMAKE_SYSTEM_NAME}, HAVE_PTHREADS=${HAVE_PTHREADS}, HAVE_MALLOC=${HAVE_MALLOC}")
+ elseif(EMSCRIPTEN)
+   # Hide noisy warnings that intend to aid mostly during initial stages of porting a new
+   # project. Uncomment at will for verbose cross-compiling -I/../ path info.
+diff --git a/build-scripts/config.sub b/build-scripts/config.sub
+index 3d35cde..4972bea 100755
+--- a/build-scripts/config.sub
++++ b/build-scripts/config.sub
+@@ -2099,6 +2099,7 @@ case $os in
+ 	| qnx* \
+ 	| rdos* \
+ 	| redox* \
++	| safaos* \
+ 	| rhapsody* \
+ 	| riscix* \
+ 	| riscos* \
+diff --git a/cmake/sdlplatform.cmake b/cmake/sdlplatform.cmake
+index d0d5767..b686a03 100644
+--- a/cmake/sdlplatform.cmake
++++ b/cmake/sdlplatform.cmake
+@@ -31,6 +31,8 @@ macro(SDL_DetectCMakePlatform)
+     elseif(CMAKE_SYSTEM_NAME MATCHES "QNX")
+       set(SDL_CMAKE_PLATFORM QNX)
+     endif()
++  elseif(CMAKE_SYSTEM_NAME MATCHES "SafaOS")
++    set(SDL_CMAKE_PLATFORM SAFAOS)
+   elseif(APPLE)
+     if(CMAKE_SYSTEM_NAME MATCHES ".*(Darwin|MacOS).*")
+       set(SDL_CMAKE_PLATFORM MACOS)
+diff --git a/include/SDL_config.h.cmake b/include/SDL_config.h.cmake
+index dbee3c7..684c575 100644
+--- a/include/SDL_config.h.cmake
++++ b/include/SDL_config.h.cmake
+@@ -301,6 +301,7 @@
+ #cmakedefine SDL_AUDIO_DRIVER_DISK @SDL_AUDIO_DRIVER_DISK@
+ #cmakedefine SDL_AUDIO_DRIVER_DSOUND @SDL_AUDIO_DRIVER_DSOUND@
+ #cmakedefine SDL_AUDIO_DRIVER_DUMMY @SDL_AUDIO_DRIVER_DUMMY@
++#cmakedefine SDL_AUDIO_DRIVER_SAFAOS @SDL_AUDIO_DRIVER_SAFAOS@
+ #cmakedefine SDL_AUDIO_DRIVER_EMSCRIPTEN @SDL_AUDIO_DRIVER_EMSCRIPTEN@
+ #cmakedefine SDL_AUDIO_DRIVER_ESD @SDL_AUDIO_DRIVER_ESD@
+ #cmakedefine SDL_AUDIO_DRIVER_ESD_DYNAMIC @SDL_AUDIO_DRIVER_ESD_DYNAMIC@
+@@ -411,6 +412,7 @@
+ #cmakedefine SDL_VIDEO_DRIVER_DIRECTFB @SDL_VIDEO_DRIVER_DIRECTFB@
+ #cmakedefine SDL_VIDEO_DRIVER_DIRECTFB_DYNAMIC @SDL_VIDEO_DRIVER_DIRECTFB_DYNAMIC@
+ #cmakedefine SDL_VIDEO_DRIVER_DUMMY @SDL_VIDEO_DRIVER_DUMMY@
++#cmakedefine SDL_VIDEO_DRIVER_SAFAOS @SDL_VIDEO_DRIVER_SAFAOS@
+ #cmakedefine SDL_VIDEO_DRIVER_OFFSCREEN @SDL_VIDEO_DRIVER_OFFSCREEN@
+ #cmakedefine SDL_VIDEO_DRIVER_WINDOWS @SDL_VIDEO_DRIVER_WINDOWS@
+ #cmakedefine SDL_VIDEO_DRIVER_WINRT @SDL_VIDEO_DRIVER_WINRT@
+diff --git a/include/SDL_platform.h b/include/SDL_platform.h
+index 36df782..99f73fe 100644
+--- a/include/SDL_platform.h
++++ b/include/SDL_platform.h
+@@ -36,6 +36,10 @@
+ #undef __HAIKU__
+ #define __HAIKU__   1
+ #endif
++#if defined(__SAFAOS__)
++#undef __SAFAOS__
++#define __SAFAOS__  1
++#endif
+ #if defined(bsdi) || defined(__bsdi) || defined(__bsdi__)
+ #undef __BSDI__
+ #define __BSDI__    1
+diff --git a/sdl-safaos/.gitignore b/sdl-safaos/.gitignore
+new file mode 100644
+index 0000000..0f9d898
+--- /dev/null
++++ b/sdl-safaos/.gitignore
+@@ -0,0 +1,2 @@
++target
++out
+diff --git a/sdl-safaos/Cargo.lock b/sdl-safaos/Cargo.lock
+new file mode 100644
+index 0000000..1a4c85b
+--- /dev/null
++++ b/sdl-safaos/Cargo.lock
+@@ -0,0 +1,585 @@
++# This file is automatically @generated by Cargo.
++# It is not intended for manual editing.
++version = 4
++
++[[package]]
++name = "arrayref"
++version = "0.3.9"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
++
++[[package]]
++name = "arrayvec"
++version = "0.7.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
++
++[[package]]
++name = "bitflags"
++version = "2.11.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
++
++[[package]]
++name = "bytemuck"
++version = "1.25.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
++dependencies = [
++ "bytemuck_derive",
++]
++
++[[package]]
++name = "bytemuck_derive"
++version = "1.10.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f9abbd1bc6865053c427f7198e6af43bfdedc55ab791faed4fbd361d789575ff"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.117",
++]
++
++[[package]]
++name = "cfg-if"
++version = "1.0.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
++
++[[package]]
++name = "core_maths"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "77745e017f5edba1a9c1d854f6f3a52dac8a12dd5af5d2f54aecf61e43d80d30"
++dependencies = [
++ "libm",
++]
++
++[[package]]
++name = "cosmic-text"
++version = "0.16.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c4cadaea21e24c49c0c82116f2b465ae6a49d63c90e428b0f8d9ae1f638ac91f"
++dependencies = [
++ "bitflags",
++ "fontdb",
++ "harfrust",
++ "linebender_resource_handle",
++ "log",
++ "rangemap",
++ "rustc-hash",
++ "self_cell",
++ "skrifa 0.39.0",
++ "smol_str",
++ "swash",
++ "sys-locale",
++ "unicode-bidi",
++ "unicode-linebreak",
++ "unicode-script",
++ "unicode-segmentation",
++]
++
++[[package]]
++name = "font-types"
++version = "0.10.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "39a654f404bbcbd48ea58c617c2993ee91d1cb63727a37bf2323a4edeed1b8c5"
++dependencies = [
++ "bytemuck",
++]
++
++[[package]]
++name = "font-types"
++version = "0.11.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5b38ad915f6dadd993ced50848a8291a543bd41ca62bc10740d5e64e2ab4cfd7"
++dependencies = [
++ "bytemuck",
++]
++
++[[package]]
++name = "fontdb"
++version = "0.23.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "457e789b3d1202543297a350643cf459f836cade38934e7a4cf6a39e7cde2905"
++dependencies = [
++ "log",
++ "memmap2",
++ "slotmap",
++ "tinyvec",
++ "ttf-parser",
++]
++
++[[package]]
++name = "futures-core"
++version = "0.3.32"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7e3450815272ef58cec6d564423f6e755e25379b217b0bc688e295ba24df6b1d"
++
++[[package]]
++name = "futures-macro"
++version = "0.3.32"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e835b70203e41293343137df5c0664546da5745f82ec9b84d40be8336958447b"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.117",
++]
++
++[[package]]
++name = "futures-task"
++version = "0.3.32"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "037711b3d59c33004d3856fbdc83b99d4ff37a24768fa1be9ce3538a1cde4393"
++
++[[package]]
++name = "futures-util"
++version = "0.3.32"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "389ca41296e6190b48053de0321d02a77f32f8a5d2461dd38762c0593805c6d6"
++dependencies = [
++ "futures-core",
++ "futures-macro",
++ "futures-task",
++ "pin-project-lite",
++ "slab",
++]
++
++[[package]]
++name = "harfrust"
++version = "0.4.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e0caaee032384c10dd597af4579c67dee16650d862a9ccbe1233ff1a379abc07"
++dependencies = [
++ "bitflags",
++ "bytemuck",
++ "core_maths",
++ "read-fonts 0.36.0",
++ "smallvec",
++]
++
++[[package]]
++name = "libartemis"
++version = "0.1.0"
++source = "git+https://github.com/SafaOS/OpalWM#79de9d41c9f4f044dde90753906214f27ebcf18b"
++dependencies = [
++ "lune-abi",
++ "safa-api",
++]
++
++[[package]]
++name = "libc"
++version = "0.2.186"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
++
++[[package]]
++name = "libgems"
++version = "0.1.0"
++source = "git+https://github.com/SafaOS/OpalWM#79de9d41c9f4f044dde90753906214f27ebcf18b"
++dependencies = [
++ "cosmic-text",
++ "libopal",
++ "tiny-skia",
++]
++
++[[package]]
++name = "libm"
++version = "0.2.16"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
++
++[[package]]
++name = "libopal"
++version = "0.1.0"
++source = "git+https://github.com/SafaOS/OpalWM#79de9d41c9f4f044dde90753906214f27ebcf18b"
++dependencies = [
++ "opal-abi",
++ "safa-api",
++]
++
++[[package]]
++name = "libserver"
++version = "0.1.0"
++source = "git+https://github.com/SafaOS/OpalWM#79de9d41c9f4f044dde90753906214f27ebcf18b"
++dependencies = [
++ "bytemuck",
++ "futures-util",
++ "msg-macros",
++ "safa-api",
++ "thiserror",
++]
++
++[[package]]
++name = "linebender_resource_handle"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d4a5ff6bcca6c4867b1c4fd4ef63e4db7436ef363e0ad7531d1558856bae64f4"
++
++[[package]]
++name = "log"
++version = "0.4.30"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
++
++[[package]]
++name = "lune-abi"
++version = "0.1.0"
++source = "git+https://github.com/SafaOS/OpalWM#79de9d41c9f4f044dde90753906214f27ebcf18b"
++dependencies = [
++ "libserver",
++]
++
++[[package]]
++name = "memmap2"
++version = "0.9.10"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
++dependencies = [
++ "libc",
++]
++
++[[package]]
++name = "msg-macros"
++version = "0.1.0"
++source = "git+https://github.com/SafaOS/OpalWM#79de9d41c9f4f044dde90753906214f27ebcf18b"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 1.0.109",
++]
++
++[[package]]
++name = "opal-abi"
++version = "0.1.0"
++source = "git+https://github.com/SafaOS/OpalWM#79de9d41c9f4f044dde90753906214f27ebcf18b"
++dependencies = [
++ "bitflags",
++ "libserver",
++ "wide",
++]
++
++[[package]]
++name = "pin-project-lite"
++version = "0.2.17"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
++
++[[package]]
++name = "proc-macro2"
++version = "1.0.106"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
++dependencies = [
++ "unicode-ident",
++]
++
++[[package]]
++name = "quote"
++version = "1.0.45"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
++dependencies = [
++ "proc-macro2",
++]
++
++[[package]]
++name = "rangemap"
++version = "1.7.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "973443cf09a9c8656b574a866ab68dfa19f0867d0340648c7d2f6a71b8a8ea68"
++
++[[package]]
++name = "read-fonts"
++version = "0.36.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5eaa2941a4c05443ee3a7b26ab076a553c343ad5995230cc2b1d3e993bdc6345"
++dependencies = [
++ "bytemuck",
++ "core_maths",
++ "font-types 0.10.1",
++]
++
++[[package]]
++name = "read-fonts"
++version = "0.37.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7b634fabf032fab15307ffd272149b622260f55974d9fad689292a5d33df02e5"
++dependencies = [
++ "bytemuck",
++ "font-types 0.11.3",
++]
++
++[[package]]
++name = "rustc-hash"
++version = "1.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
++
++[[package]]
++name = "safa-abi"
++version = "0.6.0"
++source = "git+https://github.com/SafaOS/safa-abi#8cd5ff0c0f9ecb570f0a2686c763a7402003c20c"
++
++[[package]]
++name = "safa-api"
++version = "0.6.0"
++source = "git+https://github.com/SafaOS/safa-api#cbf372b3cf2989114ac82a0ff582958fc89fc872"
++dependencies = [
++ "safa-abi",
++ "simpldns",
++]
++
++[[package]]
++name = "safe_arch"
++version = "0.7.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "96b02de82ddbe1b636e6170c21be622223aea188ef2e139be0a5b219ec215323"
++dependencies = [
++ "bytemuck",
++]
++
++[[package]]
++name = "sdl-safaos"
++version = "0.1.0"
++dependencies = [
++ "libartemis",
++ "libgems",
++ "libopal",
++ "safa-api",
++]
++
++[[package]]
++name = "self_cell"
++version = "1.2.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b12e76d157a900eb52e81bc6e9f3069344290341720e9178cde2407113ac8d89"
++
++[[package]]
++name = "simpldns"
++version = "0.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a029d10222caeab29cc754ba77433f50bf9fed96d6f8c8d6a413ea314e42686d"
++
++[[package]]
++name = "skrifa"
++version = "0.39.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9c9eb0b904a04d09bd68c65d946617b8ff733009999050f3b851c32fb3cfb60e"
++dependencies = [
++ "bytemuck",
++ "read-fonts 0.36.0",
++]
++
++[[package]]
++name = "skrifa"
++version = "0.40.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7fbdfe3d2475fbd7ddd1f3e5cf8288a30eb3e5f95832829570cd88115a7434ac"
++dependencies = [
++ "bytemuck",
++ "read-fonts 0.37.0",
++]
++
++[[package]]
++name = "slab"
++version = "0.4.12"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
++
++[[package]]
++name = "slotmap"
++version = "1.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "bdd58c3c93c3d278ca835519292445cb4b0d4dc59ccfdf7ceadaab3f8aeb4038"
++dependencies = [
++ "version_check",
++]
++
++[[package]]
++name = "smallvec"
++version = "1.15.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
++
++[[package]]
++name = "smol_str"
++version = "0.2.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "dd538fb6910ac1099850255cf94a94df6551fbdd602454387d0adb2d1ca6dead"
++
++[[package]]
++name = "strict-num"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
++
++[[package]]
++name = "swash"
++version = "0.2.7"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "842f3cd369c2ba38966204f983eaa5e54a8e84a7d7159ed36ade2b6c335aae64"
++dependencies = [
++ "skrifa 0.40.0",
++ "yazi",
++ "zeno",
++]
++
++[[package]]
++name = "syn"
++version = "1.0.109"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "unicode-ident",
++]
++
++[[package]]
++name = "syn"
++version = "2.0.117"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "unicode-ident",
++]
++
++[[package]]
++name = "sys-locale"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
++dependencies = [
++ "libc",
++]
++
++[[package]]
++name = "thiserror"
++version = "2.0.18"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
++dependencies = [
++ "thiserror-impl",
++]
++
++[[package]]
++name = "thiserror-impl"
++version = "2.0.18"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.117",
++]
++
++[[package]]
++name = "tiny-skia"
++version = "0.12.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "47ffee5eaaf5527f630fb0e356b90ebdec84d5d18d937c5e440350f88c5a91ea"
++dependencies = [
++ "arrayref",
++ "arrayvec",
++ "bytemuck",
++ "cfg-if",
++ "log",
++ "tiny-skia-path",
++]
++
++[[package]]
++name = "tiny-skia-path"
++version = "0.12.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "edca365c3faccca67d06593c5980fa6c57687de727a03131735bb85f01fdeeb9"
++dependencies = [
++ "arrayref",
++ "bytemuck",
++ "strict-num",
++]
++
++[[package]]
++name = "tinyvec"
++version = "1.11.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3e61e67053d25a4e82c844e8424039d9745781b3fc4f32b8d55ed50f5f667ef3"
++dependencies = [
++ "tinyvec_macros",
++]
++
++[[package]]
++name = "tinyvec_macros"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
++
++[[package]]
++name = "ttf-parser"
++version = "0.25.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
++dependencies = [
++ "core_maths",
++]
++
++[[package]]
++name = "unicode-bidi"
++version = "0.3.18"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
++
++[[package]]
++name = "unicode-ident"
++version = "1.0.24"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
++
++[[package]]
++name = "unicode-linebreak"
++version = "0.1.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
++
++[[package]]
++name = "unicode-script"
++version = "0.5.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "383ad40bb927465ec0ce7720e033cb4ca06912855fc35db31b5755d0de75b1ee"
++
++[[package]]
++name = "unicode-segmentation"
++version = "1.13.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9629274872b2bfaf8d66f5f15725007f635594914870f65218920345aa11aa8c"
++
++[[package]]
++name = "version_check"
++version = "0.9.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
++
++[[package]]
++name = "wide"
++version = "0.7.33"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0ce5da8ecb62bcd8ec8b7ea19f69a51275e91299be594ea5cc6ef7819e16cd03"
++dependencies = [
++ "bytemuck",
++ "safe_arch",
++]
++
++[[package]]
++name = "yazi"
++version = "0.2.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e01738255b5a16e78bbb83e7fbba0a1e7dd506905cfc53f4622d89015a03fbb5"
++
++[[package]]
++name = "zeno"
++version = "0.3.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6df3dc4292935e51816d896edcd52aa30bc297907c26167fec31e2b0c6a32524"
+diff --git a/sdl-safaos/Cargo.toml b/sdl-safaos/Cargo.toml
+new file mode 100644
+index 0000000..3478683
+--- /dev/null
++++ b/sdl-safaos/Cargo.toml
+@@ -0,0 +1,12 @@
++[package]
++name = "sdl-safaos"
++version = "0.1.0"
++edition = "2024"
++description = "A library that exposes SafaOS's SDL port functions"
++
++[dependencies]
++libgems = { git = "https://github.com/SafaOS/OpalWM" }
++libopal = { git = "https://github.com/SafaOS/OpalWM" }
++libartemis = { git = "https://github.com/SafaOS/OpalWM" }
++
++safa-api = { git = "https://github.com/SafaOS/safa-api", features=["std"] }
+diff --git a/sdl-safaos/build.sh b/sdl-safaos/build.sh
+new file mode 100755
+index 0000000..8e2c8f5
+--- /dev/null
++++ b/sdl-safaos/build.sh
+@@ -0,0 +1,17 @@
++# Builds the libc library
++# output is in the `out` directory
++
++
++target=$1
++if [ -z "$target" ]; then
++    echo "Usage: $0 [arch=x86_64|aarch64]"
++    exit 1
++fi
++
++set -euo pipefail
++sasdl=$(cargo rustc --crate-type=staticlib --target "$target-unknown-safaos" --release --message-format=json-render-diagnostics -- -C force-unwind-tables | jq -r 'select(.reason == "compiler-artifact" and (.target.kind | index("staticlib"))) | .filenames[] | select(endswith(".a"))')
++
++
++rm -rf out || true
++mkdir -p out
++cp $sasdl "out/libSafaSDL.a"
+diff --git a/sdl-safaos/src/audio.rs b/sdl-safaos/src/audio.rs
+new file mode 100644
+index 0000000..93bb430
+--- /dev/null
++++ b/sdl-safaos/src/audio.rs
+@@ -0,0 +1,59 @@
++use std::ffi::c_int;
++
++use libartemis::{misc::AudioFormat, stream::Stream};
++use safa_api::syscalls::thread::yield_now;
++
++#[unsafe(no_mangle)]
++extern "C" fn SAFAAUD_get_stream_buf(stream: *mut Stream) -> *mut u8 {
++    unsafe { (*stream).buf_mut().as_mut_ptr() }
++}
++
++#[unsafe(no_mangle)]
++extern "C" fn SAFAAUD_stream_sync_all(stream: *mut Stream) -> u32 {
++    let stream = unsafe { &mut *stream };
++    let pending = (stream.buf_mut().len() / stream.bytes_per_sample() as usize) as u32;
++    let mut synced = 0;
++    while pending > synced {
++        let now = stream.sync(synced, pending - synced);
++        if now == 0 {
++            yield_now();
++        }
++
++        synced += now;
++    }
++
++    synced
++}
++
++#[unsafe(no_mangle)]
++extern "C" fn SAFA_destroy_stream(stream: *mut Stream) {
++    drop(unsafe { Box::from_raw(stream) });
++}
++
++#[unsafe(no_mangle)]
++extern "C" fn SAFA_create_stream(
++    freq: u32,
++    audio_depth: u32,
++    is_floating: bool,
++    is_singed: bool,
++    channels: u16,
++    samples: u32,
++    stream_storage: *mut *mut Stream,
++) -> c_int {
++    let Some(format) = AudioFormat::from_raw(
++        channels as u8,
++        freq,
++        audio_depth as u8,
++        match (is_floating, is_singed) {
++            (true, _) => libartemis::misc::SampleFormat::Floating,
++            (false, true) => libartemis::misc::SampleFormat::Singed,
++            (false, false) => todo!("Unsigned Audio"),
++        },
++    ) else {
++        return -2;
++    };
++
++    let stream = Stream::create(format, samples);
++    unsafe { *stream_storage = Box::into_raw(Box::new(stream)) };
++    0
++}
+diff --git a/sdl-safaos/src/lib.rs b/sdl-safaos/src/lib.rs
+new file mode 100644
+index 0000000..31b152b
+--- /dev/null
++++ b/sdl-safaos/src/lib.rs
+@@ -0,0 +1,16 @@
++use std::{thread::sleep, time::Duration};
++
++use safa_api::syscalls::misc::uptime;
++
++mod audio;
++mod video;
++
++#[unsafe(no_mangle)]
++extern "C" fn SAFA_sleep_ms(delay: u64) {
++    sleep(Duration::from_millis(delay));
++}
++
++#[unsafe(no_mangle)]
++extern "C" fn SAFA_uptime_ms() -> u64 {
++    uptime()
++}
+diff --git a/sdl-safaos/src/video.rs b/sdl-safaos/src/video.rs
+new file mode 100644
+index 0000000..24f206c
+--- /dev/null
++++ b/sdl-safaos/src/video.rs
+@@ -0,0 +1,389 @@
++use std::{
++    ffi::{CStr, c_char},
++    os::raw::c_int,
++};
++
++use libgems::{Data, WindowBuilder};
++use libopal::{
++    DequeuedEvents, WindowEvent,
++    defs::{HeldMouseButtons, KeyModifiers, WindowID},
++    event::{KeyCode, KeyEventKind},
++};
++
++use crate::video::defs::{SDLApp, SDLData, SDLRect, SDLWindow};
++
++mod sdl_scancode;
++use sdl_scancode::*;
++mod defs;
++
++#[unsafe(no_mangle)]
++pub extern "C" fn SAFAVID_init_app(app: *mut *mut SDLApp) {
++    unsafe { *app = Box::into_raw(Box::new(SDLApp::new(SDLData))) }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn SAFAVID_destroy_app(app: *mut SDLApp) {
++    drop(unsafe { Box::from_raw(app) });
++}
++const SDL_BUTTON_LEFT: u8 = 1;
++const SDL_BUTTON_MIDDLE: u8 = 2;
++const SDL_BUTTON_RIGHT: u8 = 3;
++#[inline]
++fn safaos_keycode_to_sdl_scancode(code: u16) -> SDLScancode {
++    // Try to map the incoming KeyCode numeric value to the libopal KeyCode enum
++    let key = match KeyCode::try_from(code) {
++        Ok(k) => k,
++        Err(_) => return SDL_SCANCODE_UNKNOWN,
++    };
++
++    match key {
++        KeyCode::Null => SDL_SCANCODE_UNKNOWN,
++
++        // Function keys
++        KeyCode::F1 => SDL_SCANCODE_F1,
++        KeyCode::F2 => SDL_SCANCODE_F2,
++        KeyCode::F3 => SDL_SCANCODE_F3,
++        KeyCode::F4 => SDL_SCANCODE_F4,
++        KeyCode::F5 => SDL_SCANCODE_F5,
++        KeyCode::F6 => SDL_SCANCODE_F6,
++        KeyCode::F7 => SDL_SCANCODE_F7,
++        KeyCode::F8 => SDL_SCANCODE_F8,
++        KeyCode::F9 => SDL_SCANCODE_F9,
++        KeyCode::F10 => SDL_SCANCODE_F10,
++        KeyCode::F11 => SDL_SCANCODE_F11,
++        KeyCode::F12 => SDL_SCANCODE_F12,
++        KeyCode::PrintScr => SDL_SCANCODE_PRINTSCREEN,
++
++        // Escape / digits / punctuation
++        KeyCode::Esc => SDL_SCANCODE_ESCAPE,
++        KeyCode::Key1 => SDL_SCANCODE_1,
++        KeyCode::Key2 => SDL_SCANCODE_2,
++        KeyCode::Key3 => SDL_SCANCODE_3,
++        KeyCode::Key4 => SDL_SCANCODE_4,
++        KeyCode::Key5 => SDL_SCANCODE_5,
++        KeyCode::Key6 => SDL_SCANCODE_6,
++        KeyCode::Key7 => SDL_SCANCODE_7,
++        KeyCode::Key8 => SDL_SCANCODE_8,
++        KeyCode::Key9 => SDL_SCANCODE_9,
++        KeyCode::Key0 => SDL_SCANCODE_0,
++        KeyCode::Minus => SDL_SCANCODE_MINUS,
++        KeyCode::Equals => SDL_SCANCODE_EQUALS,
++        KeyCode::Backspace => SDL_SCANCODE_BACKSPACE,
++
++        // Q-P row
++        KeyCode::KeyQ => SDL_SCANCODE_Q,
++        KeyCode::KeyW => SDL_SCANCODE_W,
++        KeyCode::KeyE => SDL_SCANCODE_E,
++        KeyCode::KeyR => SDL_SCANCODE_R,
++        KeyCode::KeyT => SDL_SCANCODE_T,
++        KeyCode::KeyY => SDL_SCANCODE_Y,
++        KeyCode::KeyU => SDL_SCANCODE_U,
++        KeyCode::KeyI => SDL_SCANCODE_I,
++        KeyCode::KeyO => SDL_SCANCODE_O,
++        KeyCode::KeyP => SDL_SCANCODE_P,
++        KeyCode::LeftBrace => SDL_SCANCODE_LEFTBRACKET,
++        KeyCode::RightBrace => SDL_SCANCODE_RIGHTBRACKET,
++        KeyCode::BackSlash => SDL_SCANCODE_BACKSLASH,
++
++        // A-L row
++        KeyCode::KeyA => SDL_SCANCODE_A,
++        KeyCode::KeyS => SDL_SCANCODE_S,
++        KeyCode::KeyD => SDL_SCANCODE_D,
++        KeyCode::KeyF => SDL_SCANCODE_F,
++        KeyCode::KeyG => SDL_SCANCODE_G,
++        KeyCode::KeyH => SDL_SCANCODE_H,
++        KeyCode::KeyJ => SDL_SCANCODE_J,
++        KeyCode::KeyK => SDL_SCANCODE_K,
++        KeyCode::KeyL => SDL_SCANCODE_L,
++        KeyCode::Semicolon => SDL_SCANCODE_SEMICOLON,
++        KeyCode::DoubleQuote => SDL_SCANCODE_APOSTROPHE,
++        KeyCode::Return => SDL_SCANCODE_RETURN,
++
++        // Z-M row
++        KeyCode::KeyZ => SDL_SCANCODE_Z,
++        KeyCode::KeyX => SDL_SCANCODE_X,
++        KeyCode::KeyC => SDL_SCANCODE_C,
++        KeyCode::KeyV => SDL_SCANCODE_V,
++        KeyCode::KeyB => SDL_SCANCODE_B,
++        KeyCode::KeyN => SDL_SCANCODE_N,
++        KeyCode::KeyM => SDL_SCANCODE_M,
++        KeyCode::BackQuote => SDL_SCANCODE_GRAVE,
++        KeyCode::Comma => SDL_SCANCODE_COMMA,
++        KeyCode::Dot => SDL_SCANCODE_PERIOD,
++        KeyCode::Slash => SDL_SCANCODE_SLASH,
++
++        // Modifiers / whitespace / navigation
++        KeyCode::Tab => SDL_SCANCODE_TAB,
++        KeyCode::CapsLock => SDL_SCANCODE_CAPSLOCK,
++        KeyCode::Ctrl => SDL_SCANCODE_LCTRL,
++        KeyCode::Shift => SDL_SCANCODE_LSHIFT,
++        KeyCode::Alt => SDL_SCANCODE_LALT,
++        KeyCode::Super => SDL_SCANCODE_LGUI,
++        KeyCode::Space => SDL_SCANCODE_SPACE,
++        KeyCode::Up => SDL_SCANCODE_UP,
++        KeyCode::Down => SDL_SCANCODE_DOWN,
++        KeyCode::Left => SDL_SCANCODE_LEFT,
++        KeyCode::Right => SDL_SCANCODE_RIGHT,
++
++        KeyCode::PageUp => SDL_SCANCODE_PAGEUP,
++        KeyCode::PageDown => SDL_SCANCODE_PAGEDOWN,
++        KeyCode::Insert => SDL_SCANCODE_INSERT,
++        KeyCode::Delete => SDL_SCANCODE_DELETE,
++        KeyCode::Home => SDL_SCANCODE_HOME,
++        KeyCode::End => SDL_SCANCODE_END,
++
++        KeyCode::LastKey => SDL_SCANCODE_UNKNOWN,
++    }
++}
++
++#[inline(always)]
++fn handle_events<I: Iterator<Item = (WindowID, *mut SDLWindow)> + Clone>(
++    windows: I,
++    events: DequeuedEvents,
++    key_press: impl Fn(*mut SDLWindow, bool, KeyCode, KeyModifiers),
++    mouse_move: impl Fn(*mut SDLWindow, i32, i32),
++    mouse_leave: impl Fn(*mut SDLWindow),
++    mouse_btns: impl Fn(*mut SDLWindow, HeldMouseButtons, bool),
++    focus_change: impl Fn(*mut SDLWindow, bool),
++) -> bool {
++    let mut handled_any = false;
++    for event in events.into_iter() {
++        for (window, sdl_window) in windows.clone() {
++            if window == event.receiver() {
++                handled_any = true;
++                match event.event() {
++                    WindowEvent::Key(e) => {
++                        let pressed = e.kind == KeyEventKind::Press;
++                        let modifiers = e.modifiers;
++                        (key_press)(sdl_window, pressed, e.code, modifiers);
++                    }
++                    WindowEvent::MouseEnter(m) => {
++                        let x = m.x() as i32;
++                        let y = m.y() as i32;
++
++                        (mouse_move)(sdl_window, x, y);
++                    }
++                    WindowEvent::MouseLeave(_m) => {
++                        (mouse_leave)(sdl_window);
++                    }
++                    WindowEvent::MouseChange(m) => {
++                        let x = m.x() as i32;
++                        let y = m.y() as i32;
++                        (mouse_move)(sdl_window, x, y);
++                        (mouse_btns)(sdl_window, m.held_buttons(), m.buttons_changed());
++                    }
++                    WindowEvent::WindowFocusChanged(f) => {
++                        (focus_change)(sdl_window, f.is_focused());
++                    }
++                    _ => {}
++                }
++            }
++        }
++    }
++
++    handled_any
++}
++
++unsafe extern "C" {
++    fn SDL_SendKeyboardKey(state: u8, scancode: SDLScancode) -> c_int;
++    fn SDL_SendMouseMotion(
++        window: *mut SDLWindow,
++        mouse_id: c_int,
++        relative: c_int,
++        x: i32,
++        y: i32,
++    ) -> c_int;
++    fn SDL_SendMouseButton(window: *mut SDLWindow, mouse_id: c_int, state: u8, button: u8)
++    -> c_int;
++    fn SDL_SetKeyboardFocus(window: *mut SDLWindow) -> c_int;
++}
++
++#[derive(Clone, Copy)]
++struct SDLWindowIter {
++    current: *mut SDLWindow,
++}
++
++impl Iterator for SDLWindowIter {
++    type Item = *mut SDLWindow;
++
++    fn next(&mut self) -> Option<Self::Item> {
++        if self.current.is_null() {
++            None
++        } else {
++            let item = self.current;
++            self.current = unsafe { (*self.current).next };
++            Some(item)
++        }
++    }
++}
++
++#[unsafe(no_mangle)]
++extern "C" fn SAFA_handle_events(app: *mut SDLApp, windows: *mut SDLWindow) -> bool {
++    let app = unsafe { &mut *app };
++    let Some(events) = app.try_wait_for_events(false) else {
++        return false;
++    };
++    let window_iter = SDLWindowIter { current: windows }.map(|w| (unsafe { &*w }.real_win_id(), w));
++
++    handle_events::<_>(
++        window_iter,
++        events,
++        |_, pressed, key, _| {
++            let state = if pressed { 1 } else { 0 };
++            unsafe { SDL_SendKeyboardKey(state, safaos_keycode_to_sdl_scancode(key as u16)) };
++        },
++        |w, x, y| {
++            unsafe { SDL_SendMouseMotion(w, 0, 0, x, y) };
++        },
++        |w| {
++            unsafe { SDL_SendMouseMotion(w, 0, 0, -1, -1) };
++        },
++        |w, state, _button| {
++            let mid_clicked = state.contains(HeldMouseButtons::MIDDLE);
++            let left_clicked = state.contains(HeldMouseButtons::LEFT);
++            let right_clicked = state.contains(HeldMouseButtons::RIGHT);
++
++            unsafe {
++                SDL_SendMouseButton(w, 0, if mid_clicked { 1 } else { 0 }, SDL_BUTTON_MIDDLE)
++            };
++            unsafe { SDL_SendMouseButton(w, 0, if left_clicked { 1 } else { 0 }, SDL_BUTTON_LEFT) };
++            unsafe {
++                SDL_SendMouseButton(w, 0, if right_clicked { 1 } else { 0 }, SDL_BUTTON_RIGHT)
++            };
++        },
++        |w, focused| {
++            unsafe { SDL_SetKeyboardFocus(if focused { w } else { std::ptr::null_mut() }) };
++        },
++    )
++}
++
++#[unsafe(no_mangle)]
++extern "C" fn SAFA_video_bounds(w: &mut u32, h: &mut u32) {
++    let (v_w, v_h) = libopal::get_screen_dimensions();
++    *w = v_w;
++    *h = v_h;
++}
++
++#[unsafe(no_mangle)]
++extern "C" fn SAFAVID_set_window_title(
++    app: *mut SDLApp,
++    sdl_window: *mut SDLWindow,
++    new_title: *const c_char,
++) -> c_int {
++    let sdl_window = unsafe { &mut *sdl_window };
++    let app = unsafe { &mut *app };
++
++    let window = app
++        .get_window(sdl_window.real_win_id())
++        .expect("BAD SDL window");
++    let title = if new_title.is_null() {
++        None
++    } else {
++        Some(unsafe { CStr::from_ptr(sdl_window.title) })
++    };
++
++    if let Some(title) = title.and_then(|t| t.to_str().ok()) {
++        eprintln!("SAFAVID_set_window_title: `{title}`");
++        window.set_title(title);
++        0
++    } else {
++        eprintln!("SAFAVID_set_window_title: [[EMPTY]]");
++        window.set_title(" ");
++        -1
++    }
++}
++#[unsafe(no_mangle)]
++extern "C" fn SAFA_create_SDL_window(app: *mut SDLApp, sdl_window: *mut SDLWindow) -> bool {
++    let sdl_window = unsafe { &mut *sdl_window };
++    let app = unsafe { &mut *app };
++
++    let title = if sdl_window.title.is_null() {
++        None
++    } else {
++        Some(unsafe { CStr::from_ptr(sdl_window.title) })
++    };
++    let w = sdl_window.w;
++    let h = sdl_window.h;
++    let mut builder = WindowBuilder::new(w as u32, h as u32)
++        .use_all_space(false)
++        .x(Some(sdl_window.x as i32))
++        .y(Some(sdl_window.y as i32));
++    if let Some(title) = title.and_then(|t| t.to_str().ok()) {
++        builder = builder.title(title);
++    } else {
++        builder = builder.title(" ");
++    }
++
++    let mut window = builder.build::<(), Data<SDLData>>(());
++    window.try_redraw();
++    sdl_window.set_window_data(window.win_id(), 0);
++
++    app.add_window(window);
++    true
++}
++
++#[unsafe(no_mangle)]
++extern "C" fn SAFA_destroy_SDL_window(app: *mut SDLApp, sdl_window_ptr: *mut SDLWindow) {
++    let sdl_window = unsafe { &mut *sdl_window_ptr };
++    let app = unsafe { &mut *app };
++    let window = app.get_window(sdl_window.real_win_id());
++    if let Some(w) = window {
++        w.try_redraw();
++    }
++    drop(app.remove_window(sdl_window.real_win_id()));
++    eprintln!("Window destroyed: {sdl_window_ptr:?}");
++}
++
++use libopal::window::Pixel;
++
++#[unsafe(no_mangle)]
++extern "C" fn SAFA_setup_window_pixels(
++    app: *mut SDLApp,
++    sdl_window: *mut SDLWindow,
++    pixels: *mut *mut u8,
++    pitch: *mut c_int,
++) {
++    let sdl_window = unsafe { &mut *sdl_window };
++    let app = unsafe { &mut *app };
++    let pixels = unsafe { &mut *pixels };
++    let pitch = unsafe { &mut *pitch };
++
++    let window = app
++        .get_window(sdl_window.real_win_id())
++        .expect("BAD SDL window");
++    let win_id = window.win_id();
++
++    let (pixels_raw, draw_y_off, _) = window
++        .unoccupied_pixels()
++        .expect("No unoccupied window pixels");
++    sdl_window.set_window_data(win_id, draw_y_off);
++    *pixels = pixels_raw.as_mut_ptr().cast::<u8>();
++    *pitch = (window.inner_mut().width() as usize * size_of::<Pixel>()) as c_int;
++}
++
++#[unsafe(no_mangle)]
++extern "C" fn SAFA_update_window_pixels(
++    app: *mut SDLApp,
++    sdl_window: *mut SDLWindow,
++    rects: *const SDLRect,
++    num_rects: c_int,
++) {
++    let sdl_window = unsafe { &mut *sdl_window };
++    let app = unsafe { &mut *app };
++
++    let rects = unsafe { std::slice::from_raw_parts(rects, num_rects as usize) };
++    let window = app
++        .get_window(sdl_window.real_win_id())
++        .expect("Bad SDL Window");
++    window.try_redraw();
++
++    let draw_y_off = sdl_window.draw_y_off();
++    for rect in rects {
++        window.inner_mut().redraw(
++            rect.x as u32,
++            (rect.y as u32) + draw_y_off,
++            rect.w as u32,
++            rect.h as u32,
++        );
++    }
++}
+diff --git a/sdl-safaos/src/video/defs.rs b/sdl-safaos/src/video/defs.rs
+new file mode 100644
+index 0000000..0b9980d
+--- /dev/null
++++ b/sdl-safaos/src/video/defs.rs
+@@ -0,0 +1,180 @@
++/* Define the SDL window structure, corresponding to toplevel windows */
++/*
++struct SDL_Window
++{
++    const void *magic;
++    Uint32 id;
++    char *title;
++    SDL_Surface *icon;
++    int x, y;
++    int w, h;
++    int min_w, min_h;
++    int max_w, max_h;
++    Uint32 flags;
++    Uint32 last_fullscreen_flags;
++    Uint32 display_index;
++
++    /* Stored position and size for windowed mode */
++    SDL_Rect windowed;
++
++    SDL_DisplayMode fullscreen_mode;
++
++    float opacity;
++
++    float brightness;
++    Uint16 *gamma;
++    Uint16 *saved_gamma;        /* (just offset into gamma) */
++
++    SDL_Surface *surface;
++    SDL_bool surface_valid;
++
++    SDL_bool is_hiding;
++    SDL_bool is_destroying;
++    SDL_bool is_dropping; /* drag/drop in progress, expecting SDL_SendDropComplete(). */
++
++    SDL_Rect mouse_rect;
++
++    SDL_WindowShaper *shaper;
++
++    SDL_HitTest hit_test;
++    void *hit_test_data;
++
++    SDL_WindowUserData *data;
++
++    void *driverdata;
++
++    SDL_Window *prev;
++    SDL_Window *next;
++}*/
++use std::os::raw::{c_char, c_int, c_ushort, c_void};
++
++use libgems::App;
++
++pub use libopal::defs::WindowID;
++pub struct SDLData;
++pub type SDLApp = App<SDLData>;
++
++#[repr(C)]
++pub struct SDLSurface {
++    _private: [u8; 0],
++}
++
++#[repr(C)]
++pub struct SDLWindowUserData {
++    _private: [u8; 0],
++}
++
++#[repr(C)]
++pub struct SDLWindowShaper {
++    _private: [u8; 0],
++}
++
++#[repr(C)]
++pub struct SDLHitTest {
++    _private: [u8; 8],
++}
++
++#[repr(C)]
++#[derive(Copy, Clone, Debug)]
++pub struct SDLRect {
++    pub x: c_int,
++    pub y: c_int,
++    pub w: c_int,
++    pub h: c_int,
++}
++
++#[repr(C)]
++#[derive(Copy, Clone, Debug)]
++pub struct SDLDisplayMode {
++    pub format: u32,
++    pub w: c_int,
++    pub h: c_int,
++    pub refresh_rate: c_int,
++    pub driverdata: *mut c_void,
++}
++
++pub type SDLBool = c_int;
++#[repr(C, align(8))]
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct SDLWindowPrivate {
++    win_id: WindowID,
++    win_draw_offset: u32,
++}
++
++const _: () = assert!(size_of::<SDLWindowPrivate>() == size_of::<*mut ()>());
++
++#[repr(C)]
++pub struct SDLWindow {
++    pub magic: *const c_void,
++    pub id: u32,
++    pub title: *mut c_char,
++    pub icon: *mut SDLSurface,
++
++    /* position and size */
++    pub x: c_int,
++    pub y: c_int,
++    pub w: c_int,
++    pub h: c_int,
++    pub min_w: c_int,
++    pub min_h: c_int,
++    pub max_w: c_int,
++    pub max_h: c_int,
++
++    pub flags: u32,
++    pub last_fullscreen_flags: u32,
++    pub display_index: u32,
++
++    /* Stored position and size for windowed mode */
++    pub windowed: SDLRect,
++
++    pub fullscreen_mode: SDLDisplayMode,
++
++    pub opacity: f32,
++    pub brightness: f32,
++
++    pub gamma: *mut c_ushort,
++    pub saved_gamma: *mut c_ushort, /* (just offset into gamma) */
++
++    pub surface: *mut SDLSurface,
++    pub surface_valid: SDLBool,
++
++    pub is_hiding: SDLBool,
++    pub is_destroying: SDLBool,
++    pub is_dropping: SDLBool, /* drag/drop in progress */
++
++    pub mouse_rect: SDLRect,
++
++    pub shaper: *mut SDLWindowShaper,
++
++    pub hit_test: SDLHitTest,
++    pub hit_test_data: *mut c_void,
++
++    pub data: *mut SDLWindowUserData,
++
++    driverdata: SDLWindowPrivate,
++
++    pub prev: *mut SDLWindow,
++    pub next: *mut SDLWindow,
++}
++
++impl SDLWindow {
++    fn window_data(&self) -> SDLWindowPrivate {
++        self.driverdata
++    }
++    pub fn real_win_id(&self) -> WindowID {
++        self.window_data().win_id
++    }
++
++    pub fn draw_y_off(&self) -> u32 {
++        self.window_data().win_draw_offset
++    }
++
++    pub const fn set_window_data(&mut self, win_id: WindowID, update_y_off: u32) {
++        self.driverdata = {
++            SDLWindowPrivate {
++                win_id,
++                win_draw_offset: update_y_off,
++            }
++        };
++    }
++}
+diff --git a/sdl-safaos/src/video/sdl_scancode.rs b/sdl-safaos/src/video/sdl_scancode.rs
+new file mode 100644
+index 0000000..1a2fb64
+--- /dev/null
++++ b/sdl-safaos/src/video/sdl_scancode.rs
+@@ -0,0 +1,95 @@
++// Auto-ported subset of include/SDL_scancode.h
++// C ABI friendly: SDL_Scancode is an i32 (same as C enum under typical ABIs)
++
++pub type SDLScancode = i32;
++
++pub const SDL_SCANCODE_UNKNOWN: SDLScancode = 0;
++
++pub const SDL_SCANCODE_A: SDLScancode = 4;
++pub const SDL_SCANCODE_B: SDLScancode = 5;
++pub const SDL_SCANCODE_C: SDLScancode = 6;
++pub const SDL_SCANCODE_D: SDLScancode = 7;
++pub const SDL_SCANCODE_E: SDLScancode = 8;
++pub const SDL_SCANCODE_F: SDLScancode = 9;
++pub const SDL_SCANCODE_G: SDLScancode = 10;
++pub const SDL_SCANCODE_H: SDLScancode = 11;
++pub const SDL_SCANCODE_I: SDLScancode = 12;
++pub const SDL_SCANCODE_J: SDLScancode = 13;
++pub const SDL_SCANCODE_K: SDLScancode = 14;
++pub const SDL_SCANCODE_L: SDLScancode = 15;
++pub const SDL_SCANCODE_M: SDLScancode = 16;
++pub const SDL_SCANCODE_N: SDLScancode = 17;
++pub const SDL_SCANCODE_O: SDLScancode = 18;
++pub const SDL_SCANCODE_P: SDLScancode = 19;
++pub const SDL_SCANCODE_Q: SDLScancode = 20;
++pub const SDL_SCANCODE_R: SDLScancode = 21;
++pub const SDL_SCANCODE_S: SDLScancode = 22;
++pub const SDL_SCANCODE_T: SDLScancode = 23;
++pub const SDL_SCANCODE_U: SDLScancode = 24;
++pub const SDL_SCANCODE_V: SDLScancode = 25;
++pub const SDL_SCANCODE_W: SDLScancode = 26;
++pub const SDL_SCANCODE_X: SDLScancode = 27;
++pub const SDL_SCANCODE_Y: SDLScancode = 28;
++pub const SDL_SCANCODE_Z: SDLScancode = 29;
++
++pub const SDL_SCANCODE_1: SDLScancode = 30;
++pub const SDL_SCANCODE_2: SDLScancode = 31;
++pub const SDL_SCANCODE_3: SDLScancode = 32;
++pub const SDL_SCANCODE_4: SDLScancode = 33;
++pub const SDL_SCANCODE_5: SDLScancode = 34;
++pub const SDL_SCANCODE_6: SDLScancode = 35;
++pub const SDL_SCANCODE_7: SDLScancode = 36;
++pub const SDL_SCANCODE_8: SDLScancode = 37;
++pub const SDL_SCANCODE_9: SDLScancode = 38;
++pub const SDL_SCANCODE_0: SDLScancode = 39;
++
++pub const SDL_SCANCODE_RETURN: SDLScancode = 40;
++pub const SDL_SCANCODE_ESCAPE: SDLScancode = 41;
++pub const SDL_SCANCODE_BACKSPACE: SDLScancode = 42;
++pub const SDL_SCANCODE_TAB: SDLScancode = 43;
++pub const SDL_SCANCODE_SPACE: SDLScancode = 44;
++
++pub const SDL_SCANCODE_MINUS: SDLScancode = 45;
++pub const SDL_SCANCODE_EQUALS: SDLScancode = 46;
++pub const SDL_SCANCODE_LEFTBRACKET: SDLScancode = 47;
++pub const SDL_SCANCODE_RIGHTBRACKET: SDLScancode = 48;
++pub const SDL_SCANCODE_BACKSLASH: SDLScancode = 49;
++pub const SDL_SCANCODE_SEMICOLON: SDLScancode = 51;
++pub const SDL_SCANCODE_APOSTROPHE: SDLScancode = 52;
++pub const SDL_SCANCODE_GRAVE: SDLScancode = 53;
++pub const SDL_SCANCODE_COMMA: SDLScancode = 54;
++pub const SDL_SCANCODE_PERIOD: SDLScancode = 55;
++pub const SDL_SCANCODE_SLASH: SDLScancode = 56;
++
++pub const SDL_SCANCODE_CAPSLOCK: SDLScancode = 57;
++
++pub const SDL_SCANCODE_F1: SDLScancode = 58;
++pub const SDL_SCANCODE_F2: SDLScancode = 59;
++pub const SDL_SCANCODE_F3: SDLScancode = 60;
++pub const SDL_SCANCODE_F4: SDLScancode = 61;
++pub const SDL_SCANCODE_F5: SDLScancode = 62;
++pub const SDL_SCANCODE_F6: SDLScancode = 63;
++pub const SDL_SCANCODE_F7: SDLScancode = 64;
++pub const SDL_SCANCODE_F8: SDLScancode = 65;
++pub const SDL_SCANCODE_F9: SDLScancode = 66;
++pub const SDL_SCANCODE_F10: SDLScancode = 67;
++pub const SDL_SCANCODE_F11: SDLScancode = 68;
++pub const SDL_SCANCODE_F12: SDLScancode = 69;
++
++pub const SDL_SCANCODE_PRINTSCREEN: SDLScancode = 70;
++
++pub const SDL_SCANCODE_INSERT: SDLScancode = 73;
++pub const SDL_SCANCODE_HOME: SDLScancode = 74;
++pub const SDL_SCANCODE_PAGEUP: SDLScancode = 75;
++pub const SDL_SCANCODE_DELETE: SDLScancode = 76;
++pub const SDL_SCANCODE_END: SDLScancode = 77;
++pub const SDL_SCANCODE_PAGEDOWN: SDLScancode = 78;
++pub const SDL_SCANCODE_RIGHT: SDLScancode = 79;
++pub const SDL_SCANCODE_LEFT: SDLScancode = 80;
++pub const SDL_SCANCODE_DOWN: SDLScancode = 81;
++pub const SDL_SCANCODE_UP: SDLScancode = 82;
++
++pub const SDL_SCANCODE_LCTRL: SDLScancode = 224;
++pub const SDL_SCANCODE_LSHIFT: SDLScancode = 225;
++pub const SDL_SCANCODE_LALT: SDLScancode = 226;
++pub const SDL_SCANCODE_LGUI: SDLScancode = 227;
+diff --git a/src/audio/SDL_audio.c b/src/audio/SDL_audio.c
+index 421adbc..a49d96e 100644
+--- a/src/audio/SDL_audio.c
++++ b/src/audio/SDL_audio.c
+@@ -134,6 +134,9 @@ static const AudioBootStrap *const bootstrap[] = {
+ #endif
+ #ifdef SDL_AUDIO_DRIVER_DUMMY
+     &DUMMYAUDIO_bootstrap,
++#endif
++#ifdef SDL_AUDIO_DRIVER_SAFAOS
++    &SAFAAUD_bootstrap,
+ #endif
+     NULL
+ };
+diff --git a/src/audio/SDL_sysaudio.h b/src/audio/SDL_sysaudio.h
+index 8738769..25a95ae 100644
+--- a/src/audio/SDL_sysaudio.h
++++ b/src/audio/SDL_sysaudio.h
+@@ -209,6 +209,7 @@ extern AudioBootStrap VITAAUD_bootstrap;
+ extern AudioBootStrap N3DSAUDIO_bootstrap;
+ extern AudioBootStrap EMSCRIPTENAUDIO_bootstrap;
+ extern AudioBootStrap OS2AUDIO_bootstrap;
++extern AudioBootStrap SAFAAUD_bootstrap;
+ 
+ #endif /* SDL_sysaudio_h_ */
+ 
+diff --git a/src/audio/safaos/SDL_safaosaudio.c b/src/audio/safaos/SDL_safaosaudio.c
+new file mode 100644
+index 0000000..7380053
+--- /dev/null
++++ b/src/audio/safaos/SDL_safaosaudio.c
+@@ -0,0 +1,104 @@
++/*
++  Simple DirectMedia Layer
++  Copyright (C) 1997-2026 Sam Lantinga <slouken@libsdl.org>
++
++  This software is provided 'as-is', without any express or implied
++  warranty.  In no event will the authors be held liable for any damages
++  arising from the use of this software.
++
++  Permission is granted to anyone to use this software for any purpose,
++  including commercial applications, and to alter it and redistribute it
++  freely, subject to the following restrictions:
++
++  1. The origin of this software must not be misrepresented; you must not
++     claim that you wrote the original software. If you use this software
++     in a product, an acknowledgment in the product documentation would be
++     appreciated but is not required.
++  2. Altered source versions must be plainly marked as such, and must not be
++     misrepresented as being the original software.
++  3. This notice may not be removed or altered from any source distribution.
++*/
++#include "../../SDL_internal.h"
++#include "SDL_assert.h"
++#include "SDL_error.h"
++#include "SDL_stdinc.h"
++
++#ifdef SDL_AUDIO_DRIVER_SAFAOS
++
++/* Output audio to nowhere... */
++
++#include "SDL_timer.h"
++#include "SDL_audio.h"
++#include "../SDL_audio_c.h"
++#include "SDL_safaosaudio.h"
++
++int SAFA_create_stream(Uint32 freq, Uint32 audio_depth, Uint8 is_floating, Uint8 is_singed, Uint16 channels, Uint32 samples, void** results);
++static int SAFAAUD_OpenDevice(_THIS, const char *devname)
++{
++
++    Uint8 is_floating;
++    Uint8 is_singed;
++    Uint32 bit_depth;
++
++    // Ensure giving in a correct format
++    if (SDL_AUDIO_ISBIGENDIAN(_this->spec.format))
++        _this->spec.format = AUDIO_F32LSB;
++
++    is_floating = SDL_AUDIO_ISFLOAT(_this->spec.format);
++    is_singed = SDL_AUDIO_ISSIGNED(_this->spec.format);
++    bit_depth = _this->spec.format & SDL_AUDIO_MASK_BITSIZE;
++
++    if (!is_floating && !is_singed) {
++        _this->spec.format = AUDIO_F32LSB;
++        is_floating = (Uint8)SDL_TRUE;
++    }
++
++    if (!SAFA_create_stream(_this->spec.freq, bit_depth, is_floating, is_singed, _this->spec.channels, (Uint32)_this->spec.samples * (Uint32)_this->spec.channels, &_this->hidden)) {
++        SDL_SetError("Failed to construct a valid audio format for libartemis");
++        return -1;
++    }
++
++    SDL_assert(_this->hidden && SDL_TRUE);
++    return 0;
++}
++
++void SAFA_destroy_stream(void* stream);
++static void SAFAAUD_CloseDevice(_THIS) {
++    SAFA_destroy_stream(_this->hidden);
++}
++
++Uint8* SAFAAUD_get_stream_buf(void* stream);
++static Uint8* SAFAAUD_GetDeviceBuf(_THIS) {
++    return SAFAAUD_get_stream_buf(_this->hidden);
++}
++
++Uint32 SAFAAUD_stream_sync_all(void* stream);
++
++static void SAFAAUD_PlayDevice(_THIS) {
++    SAFAAUD_stream_sync_all(_this->hidden);
++}
++
++static SDL_bool SAFAAUD_Init(SDL_AudioDriverImpl *impl)
++{
++    /* Set the function pointers */
++    impl->OpenDevice = SAFAAUD_OpenDevice;
++    impl->CloseDevice = SAFAAUD_CloseDevice;
++
++    impl->GetDeviceBuf = SAFAAUD_GetDeviceBuf;
++    impl->PlayDevice = SAFAAUD_PlayDevice;
++
++    impl->OnlyHasDefaultOutputDevice = SDL_TRUE;
++    impl->HasCaptureSupport = SDL_FALSE;
++    impl->ProvidesOwnCallbackThread = SDL_FALSE;
++    impl->SupportsNonPow2Samples = SDL_TRUE;
++
++    return SDL_TRUE; /* this audio target is available. */
++}
++
++AudioBootStrap SAFAAUD_bootstrap = {
++    "safaos", "SDL SafaOS audio driver", SAFAAUD_Init, SDL_TRUE
++};
++
++#endif
++
++/* vi: set ts=4 sw=4 expandtab: */
+diff --git a/src/audio/safaos/SDL_safaosaudio.h b/src/audio/safaos/SDL_safaosaudio.h
+new file mode 100644
+index 0000000..c93270c
+--- /dev/null
++++ b/src/audio/safaos/SDL_safaosaudio.h
+@@ -0,0 +1,37 @@
++/*
++  Simple DirectMedia Layer
++  Copyright (C) 1997-2026 Sam Lantinga <slouken@libsdl.org>
++
++  This software is provided 'as-is', without any express or implied
++  warranty.  In no event will the authors be held liable for any damages
++  arising from the use of this software.
++
++  Permission is granted to anyone to use this software for any purpose,
++  including commercial applications, and to alter it and redistribute it
++  freely, subject to the following restrictions:
++
++  1. The origin of this software must not be misrepresented; you must not
++     claim that you wrote the original software. If you use this software
++     in a product, an acknowledgment in the product documentation would be
++     appreciated but is not required.
++  2. Altered source versions must be plainly marked as such, and must not be
++     misrepresented as being the original software.
++  3. This notice may not be removed or altered from any source distribution.
++*/
++#include "../../SDL_internal.h"
++
++#ifndef SDL_safaosaudio_h_
++#define SDL_safaosaudio_h_
++
++#include "../SDL_sysaudio.h"
++
++/* Hidden "this" pointer for the audio functions */
++#define _THIS SDL_AudioDevice *_this
++
++// Private data
++struct SDL_PrivateAudioData
++{
++};
++
++#endif /* SDL_dummyaudio_h_ */
++/* vi: set ts=4 sw=4 expandtab: */
+diff --git a/src/dynapi/SDL_dynapi.h b/src/dynapi/SDL_dynapi.h
+index 178218c..4c245c0 100644
+--- a/src/dynapi/SDL_dynapi.h
++++ b/src/dynapi/SDL_dynapi.h
+@@ -47,6 +47,8 @@
+ #define SDL_DYNAMIC_API 0
+ #elif defined(__ANDROID__) /* probably not useful on Android. */
+ #define SDL_DYNAMIC_API 0
++#elif defined(__SAFAOS__)
++#define SDL_DYNAMIC_API 0
+ #elif defined(__native_client__) && __native_client__  /* probably not useful on NACL. */
+ #define SDL_DYNAMIC_API 0
+ #elif defined(__EMSCRIPTEN__) && __EMSCRIPTEN__  /* probably not useful on Emscripten. */
+diff --git a/src/file/SDL_rwops.c b/src/file/SDL_rwops.c
+index 94fc047..29a8382 100644
+--- a/src/file/SDL_rwops.c
++++ b/src/file/SDL_rwops.c
+@@ -37,8 +37,10 @@
+ #ifdef HAVE_STDIO_H
+ #include <stdio.h>
+ #include <errno.h>
++#if !defined(__SAFAOS__)
+ #include <sys/stat.h>
+ #endif
++#endif
+ #ifdef HAVE_LIMITS_H
+ #include <limits.h>
+ #endif
+@@ -537,7 +539,7 @@ static SDL_bool IsRegularFileOrPipe(FILE *f)
+         !((st.st_mode & _S_IFMT) == _S_IFREG || (st.st_mode & _S_IFMT) == _S_IFIFO)) {
+         return SDL_FALSE;
+     }
+-    #elif !defined __EMSCRIPTEN__
++    #elif !defined __EMSCRIPTEN__ && !defined __SAFAOS__
+     struct stat st;
+     if (fstat(fileno(f), &st) < 0 || !(S_ISREG(st.st_mode) || S_ISFIFO(st.st_mode))) {
+         return SDL_FALSE;
+diff --git a/src/joystick/SDL_steam_virtual_gamepad.c b/src/joystick/SDL_steam_virtual_gamepad.c
+index 2948326..3df89d7 100644
+--- a/src/joystick/SDL_steam_virtual_gamepad.c
++++ b/src/joystick/SDL_steam_virtual_gamepad.c
+@@ -27,7 +27,7 @@
+ 
+ #ifdef __WIN32__
+ #include "../core/windows/SDL_windows.h"
+-#else
++#elif !defined(__SAFAOS__)
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #endif
+@@ -63,7 +63,7 @@ static Uint64 GetFileModificationTime(const char *file)
+         }
+         SDL_free(wFile);
+     }
+-#else
++#elif !defined(__SAFAOS__)
+     struct stat sb;
+ 
+     if (stat(file, &sb) == 0) {
+diff --git a/src/stdlib/SDL_malloc.c b/src/stdlib/SDL_malloc.c
+index 35d01a6..4eecc34 100644
+--- a/src/stdlib/SDL_malloc.c
++++ b/src/stdlib/SDL_malloc.c
+@@ -524,6 +524,15 @@ DEFAULT_MMAP_THRESHOLD       default: 256K
+ #include <sys/types.h>  /* For size_t */
+ #endif  /* LACKS_SYS_TYPES_H */
+ 
++#if defined(__SAFAOS__)
++#define HAVE_MMAP 0
++#define HAVE_MORECORE 0
++#define LACKS_UNISTD_H
++#define LACKS_SYS_PARAM_H
++#define LACKS_SYS_MMAN_H
++#define LACKS_FCNTL_H
++#endif  /* __SAFAOS__ */
++
+ /* The maximum possible size_t value has all bits set */
+ #define MAX_SIZE_T           (~(size_t)0)
+ 
+diff --git a/src/thread/pthread/SDL_syssem.c b/src/thread/pthread/SDL_syssem.c
+index 4c6a2e5..9980995 100644
+--- a/src/thread/pthread/SDL_syssem.c
++++ b/src/thread/pthread/SDL_syssem.c
+@@ -31,7 +31,7 @@
+ 
+ /* Wrapper around POSIX 1003.1b semaphores */
+ 
+-#if defined(__MACOSX__) || defined(__IPHONEOS__)
++#if defined(__MACOSX__) || defined(__IPHONEOS__) || defined(__SAFAOS__)
+ /* Mac OS X doesn't support sem_getvalue() as of version 10.4 */
+ #include "../generic/SDL_syssem.c"
+ #else
+diff --git a/src/thread/pthread/SDL_systhread.c b/src/thread/pthread/SDL_systhread.c
+index 212fe9c..5482303 100644
+--- a/src/thread/pthread/SDL_systhread.c
++++ b/src/thread/pthread/SDL_systhread.c
+@@ -60,7 +60,7 @@
+ #endif
+ 
+ 
+-#ifndef __NACL__
++#if defined(__NACL__) && !defined(__SAFAOS__)
+ /* List of signals to mask in the subthreads */
+ static const int sig_list[] = {
+     SIGHUP, SIGINT, SIGQUIT, SIGPIPE, SIGALRM, SIGTERM, SIGCHLD, SIGWINCH,
+@@ -122,7 +122,7 @@ int SDL_SYS_CreateThread(SDL_Thread *thread)
+ 
+ void SDL_SYS_SetupThread(const char *name)
+ {
+-#if !defined(__NACL__)
++#if !defined(__NACL__) && !defined(__SAFAOS__)
+     int i;
+     sigset_t mask;
+ #endif /* !__NACL__ */
+@@ -162,7 +162,7 @@ void SDL_SYS_SetupThread(const char *name)
+     }
+ 
+    /* NativeClient does not yet support signals.*/
+-#if !defined(__NACL__)
++#if !defined(__NACL__) && !defined(__SAFAOS__)
+     /* Mask asynchronous signals for this thread */
+     sigemptyset(&mask);
+     for (i = 0; sig_list[i]; ++i) {
+@@ -188,7 +188,7 @@ SDL_threadID SDL_ThreadID(void)
+ 
+ int SDL_SYS_SetThreadPriority(SDL_ThreadPriority priority)
+ {
+-#if defined(__NACL__) || defined(__RISCOS__) || defined(__OS2__)
++#if defined(__NACL__) || defined(__RISCOS__) || defined(__OS2__) || defined(__SAFAOS__)
+     /* FIXME: Setting thread priority does not seem to be supported in NACL */
+     return 0;
+ #else
+diff --git a/src/thread/pthread/SDL_systls.c b/src/thread/pthread/SDL_systls.c
+index 6bd85dc..89a53e1 100644
+--- a/src/thread/pthread/SDL_systls.c
++++ b/src/thread/pthread/SDL_systls.c
+@@ -24,6 +24,9 @@
+ #include "../SDL_thread_c.h"
+ 
+ #include <pthread.h>
++#if defined (__SAFAOS__)
++#include "../generic/SDL_systls.c"
++#else
+ 
+ #define INVALID_PTHREAD_KEY ((pthread_key_t)-1)
+ 
+@@ -79,3 +82,4 @@ void SDL_SYS_QuitTLSData(void)
+ }
+ 
+ /* vi: set ts=4 sw=4 expandtab: */
++#endif
+diff --git a/src/timer/safaos/SDL_systimer.c b/src/timer/safaos/SDL_systimer.c
+new file mode 100644
+index 0000000..240f8c9
+--- /dev/null
++++ b/src/timer/safaos/SDL_systimer.c
+@@ -0,0 +1,81 @@
++/*
++  Simple DirectMedia Layer
++  Copyright (C) 1997-2026 Sam Lantinga <slouken@libsdl.org>
++
++  This software is provided 'as-is', without any express or implied
++  warranty.  In no event will the authors be held liable for any damages
++  arising from the use of this software.
++
++  Permission is granted to anyone to use this software for any purpose,
++  including commercial applications, and to alter it and redistribute it
++  freely, subject to the following restrictions:
++
++  1. The origin of this software must not be misrepresented; you must not
++     claim that you wrote the original software. If you use this software
++     in a product, an acknowledgment in the product documentation would be
++     appreciated but is not required.
++  2. Altered source versions must be plainly marked as such, and must not be
++     misrepresented as being the original software.
++  3. This notice may not be removed or altered from any source distribution.
++*/
++#include "../../SDL_internal.h"
++#include "SDL_stdinc.h"
++#include <sys/time.h>
++
++static SDL_bool ticks_started = SDL_FALSE;
++static Uint64 start_ticks = 0;
++
++Uint64 SAFA_uptime_ms(void);
++void SDL_TicksInit(void)
++{
++    if (ticks_started) {
++        return;
++    }
++    start_ticks = SAFA_uptime_ms();
++    ticks_started = SDL_TRUE;
++}
++
++void SDL_TicksQuit(void)
++{
++    ticks_started = SDL_FALSE;
++}
++
++Uint64 SDL_GetTicks64(void)
++{
++
++    Uint64 now;
++    if (!ticks_started) {
++        SDL_TicksInit();
++    }
++
++
++    now = SAFA_uptime_ms();
++    return now - start_ticks;
++}
++
++Uint64 SDL_GetPerformanceCounter(void)
++{
++
++    if (!ticks_started) {
++        SDL_TicksInit();
++    }
++
++
++    return SAFA_uptime_ms();
++}
++
++Uint64 SDL_GetPerformanceFrequency(void)
++{
++    if (!ticks_started) {
++        SDL_TicksInit();
++    }
++
++    return 1000;
++}
++
++
++void SAFA_sleep_ms(Uint64 ms);
++void SDL_Delay(Uint32 ms)
++{
++    SAFA_sleep_ms(ms);
++}
+diff --git a/src/video/SDL_sysvideo.h b/src/video/SDL_sysvideo.h
+index badb1a3..aaea4ea 100644
+--- a/src/video/SDL_sysvideo.h
++++ b/src/video/SDL_sysvideo.h
+@@ -475,6 +475,7 @@ extern VideoBootStrap RPI_bootstrap;
+ extern VideoBootStrap KMSDRM_bootstrap;
+ extern VideoBootStrap KMSDRM_LEGACY_bootstrap;
+ extern VideoBootStrap DUMMY_bootstrap;
++extern VideoBootStrap SAFA_bootstrap;
+ extern VideoBootStrap DUMMY_evdev_bootstrap;
+ extern VideoBootStrap Wayland_bootstrap;
+ extern VideoBootStrap NACL_bootstrap;
+diff --git a/src/video/SDL_video.c b/src/video/SDL_video.c
+index e4f54c6..66b976c 100644
+--- a/src/video/SDL_video.c
++++ b/src/video/SDL_video.c
+@@ -100,6 +100,9 @@ static VideoBootStrap *bootstrap[] = {
+ #ifdef SDL_VIDEO_DRIVER_HAIKU
+     &HAIKU_bootstrap,
+ #endif
++#ifdef SDL_VIDEO_DRIVER_SAFAOS
++    &SAFA_bootstrap,
++#endif
+ #ifdef SDL_VIDEO_DRIVER_PANDORA
+     &PND_bootstrap,
+ #endif
+diff --git a/src/video/safaos/SDL_safaosvideo.c b/src/video/safaos/SDL_safaosvideo.c
+new file mode 100644
+index 0000000..fd2dd7f
+--- /dev/null
++++ b/src/video/safaos/SDL_safaosvideo.c
+@@ -0,0 +1,161 @@
++
++/*
++  Simple DirectMedia Layer
++  Copyright (C) 1997-2026 Sam Lantinga <slouken@libsdl.org>
++
++  This software is provided 'as-is', without any express or implied
++  warranty.  In no event will the authors be held liable for any damages
++  arising from the use of this software.
++
++  Permission is granted to anyone to use this software for any purpose,
++  including commercial applications, and to alter it and redistribute it
++  freely, subject to the following restrictions:
++
++  1. The origin of this software must not be misrepresented; you must not
++     claim that you wrote the original software. If you use this software
++     in a product, an acknowledgment in the product documentation would be
++     appreciated but is not required.
++  2. Altered source versions must be plainly marked as such, and must not be
++     misrepresented as being the original software.
++  3. This notice may not be removed or altered from any source distribution.
++*/
++#include "../../SDL_internal.h"
++#include "SDL_pixels.h"
++#include <stdint.h>
++
++#if SDL_VIDEO_DRIVER_SAFAOS
++
++#include "SDL_video.h"
++#include "SDL_mouse.h"
++#include "../SDL_sysvideo.h"
++#include "../SDL_pixels_c.h"
++#include "../../events/SDL_events_c.h"
++
++#include "SDL_hints.h"
++
++#define SAFAVID_DRIVER_NAME       "safaos"
++
++typedef void SAFAVID_App;
++
++void SAFAVID_init_app(SAFAVID_App **app);
++void SAFAVID_destroy_app(SAFAVID_App *app);
++
++void SAFA_video_bounds(uint32_t *w, uint32_t *h);
++uint8_t SAFA_handle_events(SAFAVID_App *app, SDL_Window* windows);
++
++uint8_t SAFA_create_SDL_window(SAFAVID_App *app, SDL_Window* window);
++void SAFA_destroy_SDL_window(SAFAVID_App *app, SDL_Window* window);
++
++
++int SAFA_CreateWindow(_THIS, SDL_Window* window) {
++    if (!SAFA_create_SDL_window(_this->driverdata, window)) {
++        return -1;
++    }
++    return 0;
++}
++
++static void SAFA_DestroyWindow(_THIS, SDL_Window* window) {
++    SAFA_destroy_SDL_window(_this->driverdata, window);
++}
++
++
++
++static void SAFA_PumpEvents(_THIS)
++{
++    SAFA_handle_events(_this->driverdata, _this->windows);
++}
++
++int SAFA_VideoInit(_THIS)
++{
++    uint32_t w;
++    uint32_t h;
++    SDL_DisplayMode mode;
++    SDL_zero(mode);
++    SAFA_video_bounds(&w, &h);
++
++
++    mode.format = SDL_PIXELFORMAT_BGRA8888;
++    mode.w = w;
++    mode.h = h;
++    mode.refresh_rate = 60;
++    mode.driverdata = NULL;
++    if (SDL_AddBasicVideoDisplay(&mode) < 0) {
++        return -1;
++    }
++
++    SDL_AddDisplayMode(&_this->displays[0], &mode);
++
++    SAFAVID_init_app(&_this->driverdata);
++    return 0;
++}
++
++
++static void SAFA_DeleteDevice(SDL_VideoDevice *device)
++{
++    SDL_free(device);
++}
++
++static void SAFA_VideoQuit(_THIS)
++{
++    SAFAVID_destroy_app(_this->driverdata);
++}
++
++void SAFA_DestroyWindowFramebuffer(_THIS, SDL_Window *window)
++{
++}
++
++void SAFA_setup_window_pixels(SAFAVID_App *app, SDL_Window *window, void **pixels, int *pitch);
++static int SAFA_CreateWindowFramebuffer(_THIS, SDL_Window *window, Uint32 *format, void **pixels, int *pitch)
++{
++    SAFA_setup_window_pixels(_this->driverdata, window, pixels, pitch);
++    *format = SDL_PIXELFORMAT_ARGB8888;
++    return 0;
++}
++
++void SAFA_update_window_pixels(SAFAVID_App *app, SDL_Window *window, const SDL_Rect *rects, int numrects);
++static int SAFA_UpdateWindowFramebuffer(_THIS, SDL_Window *window, const SDL_Rect *rects, int numrects)
++{
++    SAFA_update_window_pixels(_this->driverdata, window, rects, numrects);
++    return 0;
++}
++
++
++int SAFAVID_set_window_title(SAFAVID_App *app, SDL_Window *window, const char *new_title);
++static void SAFA_SetWindowTitle(_THIS, SDL_Window *window) {
++    SAFAVID_set_window_title(_this->driverdata, window, window->title);
++}
++
++static SDL_VideoDevice *SAFA_CreateDevice(void)
++{
++    SDL_VideoDevice *device;
++
++    device = (SDL_VideoDevice *)SDL_calloc(1, sizeof(SDL_VideoDevice));
++    if (!device) {
++        SDL_OutOfMemory();
++        return 0;
++    }
++
++    /* Set the function pointers */
++    device->VideoInit = SAFA_VideoInit;
++    device->VideoQuit = SAFA_VideoQuit;
++    device->PumpEvents = SAFA_PumpEvents;
++
++    device->CreateSDLWindow = SAFA_CreateWindow;
++    device->DestroyWindow = SAFA_DestroyWindow;
++    device->CreateWindowFramebuffer = SAFA_CreateWindowFramebuffer;
++    device->UpdateWindowFramebuffer = SAFA_UpdateWindowFramebuffer;
++    device->DestroyWindowFramebuffer = SAFA_DestroyWindowFramebuffer;
++    device->SetWindowTitle = SAFA_SetWindowTitle;
++
++    device->free = SAFA_DeleteDevice;
++
++    return device;
++}
++
++VideoBootStrap SAFA_bootstrap = {
++    SAFAVID_DRIVER_NAME, "SDL SAFA video driver",
++    SAFA_CreateDevice,
++    NULL /* no ShowMessageBox implementation */
++};
++
++#endif
+-- 
+2.54.0
+
