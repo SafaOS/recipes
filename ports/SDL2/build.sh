@@ -1,4 +1,5 @@
-#!/bin/sh
+#!/usr/bin/env bash
+
 set -eou pipefail
 has_arg() {
     local needle="$1"
