@@ -14,7 +14,7 @@ jobs:
         with:
           submodules: "recursive"
       - name: Update rustup
-        run: rustup default 1.88.0
+        run: rustup update && rustup target add x86_64-unknown-none
       - name: Install rust toolchain
         run: ./install_rust.sh
       - name: Build
@@ -34,7 +34,7 @@ jobs:
         with:
           submodules: "recursive"
       - name: Update rustup
-        run: rustup default 1.88.0
+        run: rustup update && rustup target aarch64-unknown-none
       - name: Install rust toolchain
         run: ./install_rust.sh
       - name: Build
