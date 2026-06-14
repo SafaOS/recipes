@@ -1,0 +1,99 @@
+name: "Build All ports"
+
+on: [push]
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-x86:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+      - name: Update rustup
+        run: rustup default 1.88.0
+      - name: Install rust toolchain
+        run: ./install_rust.sh
+      - name: Build
+        run: ./build_all.sh x86_64
+      - name: Upload out/
+        uses: actions/upload-artifact@v4.6.0
+        with:
+          name: out-x86_64
+          path: out/
+
+  build-aarch64:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+      - name: Update rustup
+        run: rustup default 1.88.0
+      - name: Install rust toolchain
+        run: ./install_rust.sh
+      - name: Build
+        run: ./build_all.sh aarch64
+      - name: Upload out/
+        uses: actions/upload-artifact@v4.6.0
+        with:
+          name: out-aarch64
+          path: out/
+
+  list-ports:
+    needs: [build-x86, build-aarch64]
+    runs-on: ubuntu-latest
+    outputs:
+      ports: ${{ steps.get-ports.outputs.ports }}
+    steps:
+      - name: Download x86 out/
+        uses: actions/download-artifact@v4
+        with:
+          name: out-x86_64
+          path: out/
+      - name: Get ports
+        id: get-ports
+        run: |
+          ports=$(ls out/ | jq -R . | jq -sc .)
+          echo "ports=$ports" >> $GITHUB_OUTPUT
+
+  upload-x86:
+    needs: [list-ports]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        port: ${{ fromJson(needs.list-ports.outputs.ports) }}
+    steps:
+      - name: Download x86 out/
+        uses: actions/download-artifact@v4
+        with:
+          name: out-x86_64
+          path: out/
+      - name: Upload port artifact
+        uses: actions/upload-artifact@v4.6.0
+        with:
+          name: ${{ matrix.port }}-x86_64
+          path: out/${{ matrix.port }}
+
+  upload-aarch64:
+    needs: [list-ports]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        port: ${{ fromJson(needs.list-ports.outputs.ports) }}
+    steps:
+      - name: Download aarch64 out/
+        uses: actions/download-artifact@v4
+        with:
+          name: out-aarch64
+          path: out/
+      - name: Upload port artifact
+        uses: actions/upload-artifact@v4.6.0
+        with:
+          name: ${{ matrix.port }}-aarch64
+          path: out/${{ matrix.port }}
