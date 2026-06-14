@@ -40,15 +40,13 @@ cd ..
 
 cd $PORT_NAME
 
-DOESNT_EXITS=1
-git clone --filter=blob:none --branch $BRANCH $REPO repo || DOESNT_EXITS=0
-
-cd repo
-if $DOESNT_EXITS; then
+if git clone --filter=blob:none --branch $BRANCH $REPO repo ; then
+    cd repo
     git checkout "$COMMIT"
     git checkout -b port
     git apply ../*.patch
 else
+    cd repo
     echo "Repo already cloned, please delete it to reclone"
 fi
 
