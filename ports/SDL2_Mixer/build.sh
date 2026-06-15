@@ -28,8 +28,6 @@ CC="clang -target x86_64-unknown-none" cmake --fresh -S . -B m_build -G Ninja \
 	-DSDL2MIXER_MIDI_FLUIDSYNTH=OFF \
 	-DSDL2MIXER_WAVPACK=OFF \
 	-DSDL2MIXER_OPUS=OFF \
-	-DSDL2MIXER_MOD=OFF \
-	-DSDL2MIXER_SAMPLES=OFF
-
+	-DSDL2MIXER_MOD=OFF
 cmake --build m_build
 cmake --install m_build --prefix "$output_prefix"
