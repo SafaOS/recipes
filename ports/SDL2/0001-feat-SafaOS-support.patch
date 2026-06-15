@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 8e5fb1c5b..344f44cda 100644
+index 8e5fb1c5b..2a460e5b2 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -359,7 +359,7 @@ if(EMSCRIPTEN)
@@ -29,12 +29,13 @@ index 8e5fb1c5b..344f44cda 100644
          list(APPEND EXTRA_LIBS m)
        endif()
      endif()
-@@ -1411,7 +1411,34 @@ if(ANDROID)
+@@ -1411,7 +1411,35 @@ if(ANDROID)
    if(SDL_CLOCK_GETTIME)
      set(HAVE_CLOCK_GETTIME 1)
    endif()
 +elseif(SAFAOS)
 +  list(APPEND EXTRA_LIBS SafaSDL)
++  list(APPEND EXTRA_LIBS c)
 +
 +  if(SDL_VIDEO)
 +    set(SDL_VIDEO_DRIVER_SAFAOS 1)
