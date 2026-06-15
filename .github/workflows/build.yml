@@ -59,17 +59,22 @@ jobs:
         with:
           name: out-aarch64
           path: out-aarch64/
-      - name: Rename artifacts
+      - name: Archive artifacts
         run: |
-          for f in out-x86_64/*; do
-            mv "$f" "out-x86_64/$(basename $f)-x86_64"
+          for dir in out-x86_64/*/; do
+            name=$(basename "$dir")
+            tar -czf "out-x86_64/${name}-x86_64.tar.gz" -C out-x86_64 "$name"
+            rm -rf "$dir"
           done
-          for f in out-aarch64/*; do
-            mv "$f" "out-aarch64/$(basename $f)-aarch64"
+          for dir in out-aarch64/*/; do
+            name=$(basename "$dir")
+            tar -czf "out-aarch64/${name}-aarch64.tar.gz" -C out-aarch64 "$name"
+            rm -rf "$dir"
           done
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
-            out-x86_64/**
-            out-aarch64/**
+            out-x86_64/*
+            out-aarch64/*
+    if: startsWith(github.ref, 'refs/tags/')
