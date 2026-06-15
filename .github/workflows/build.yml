@@ -61,16 +61,19 @@ jobs:
           path: out-aarch64/
       - name: Archive artifacts
         run: |
-          for dir in out-x86_64/*/; do
+          for dir in out-x86_64/ports/*; do
             name=$(basename "$dir")
-            tar -czf "out-x86_64/${name}-x86_64.tar.gz" -C out-x86_64 "$name"
+            tar -czf "out-x86_64/${name}-x86_64.tar.gz" -C out-x86_64/ports "$name"
             rm -rf "$dir"
           done
-          for dir in out-aarch64/*/; do
+          rm -rf out-x86_64/ports
+
+          for dir in out-aarch64/ports/*; do
             name=$(basename "$dir")
-            tar -czf "out-aarch64/${name}-aarch64.tar.gz" -C out-aarch64 "$name"
+            tar -czf "out-aarch64/${name}-aarch64.tar.gz" -C out-aarch64/ports "$name"
             rm -rf "$dir"
           done
+          rm -rf out-aarch64/ports
       - name: Release
         uses: softprops/action-gh-release@v3
         with:
