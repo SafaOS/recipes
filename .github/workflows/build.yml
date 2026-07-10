@@ -14,7 +14,7 @@ jobs:
         with:
           submodules: "recursive"
       - name: Update rustup
-        run: rustup update && rustup default 1.88.0  && rustup target add x86_64-unknown-none && rustup +nightly component add rust-src
+        run: rustup update && rustup target add x86_64-unknown-none && rustup +nightly component add rust-src
       - name: Install rust toolchain
         run: ./install_rust.sh
       - name: Build
