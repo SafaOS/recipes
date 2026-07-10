@@ -1029,7 +1029,7 @@ index 000000000..347868374
 +safa-api = { git = "https://github.com/SafaOS/safa-api", features=["std"] }
 diff --git a/sdl-safaos/build.sh b/sdl-safaos/build.sh
 new file mode 100755
-index 000000000..8e2c8f59c
+index 000000000..29f24e9ae
 --- /dev/null
 +++ b/sdl-safaos/build.sh
 @@ -0,0 +1,17 @@
@@ -1044,7 +1044,7 @@ index 000000000..8e2c8f59c
 +fi
 +
 +set -euo pipefail
-+sasdl=$(cargo rustc --crate-type=staticlib --target "$target-unknown-safaos" --release --message-format=json-render-diagnostics -- -C force-unwind-tables | jq -r 'select(.reason == "compiler-artifact" and (.target.kind | index("staticlib"))) | .filenames[] | select(endswith(".a"))')
++sasdl=$(cargo +"$target-unknown-safaos" rustc --crate-type=staticlib --target "$target-unknown-safaos" --release --message-format=json-render-diagnostics -- -C force-unwind-tables | jq -r 'select(.reason == "compiler-artifact" and (.target.kind | index("staticlib"))) | .filenames[] | select(endswith(".a"))')
 +
 +
 +rm -rf out || true
