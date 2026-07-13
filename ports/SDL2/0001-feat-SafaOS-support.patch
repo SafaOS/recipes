@@ -1850,10 +1850,10 @@ index 87387692c..25a95ae27 100644
  
 diff --git a/src/audio/safaos/SDL_safaosaudio.c b/src/audio/safaos/SDL_safaosaudio.c
 new file mode 100644
-index 000000000..1f80786e0
+index 000000000..875ccbeaa
 --- /dev/null
 +++ b/src/audio/safaos/SDL_safaosaudio.c
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,127 @@
 +/*
 +  Simple DirectMedia Layer
 +  Copyright (C) 1997-2026 Sam Lantinga <slouken@libsdl.org>
@@ -1884,9 +1884,7 @@ index 000000000..1f80786e0
 +
 +/* Output audio to nowhere... */
 +
-+#include "SDL_timer.h"
 +#include "SDL_audio.h"
-+#include "../SDL_audio_c.h"
 +#include "SDL_safaosaudio.h"
 +
 +int SAFA_create_stream(Uint32 freq, Uint32 audio_depth, Uint8 is_floating, Uint8 is_singed, Uint16 channels, Uint32 samples, void** results);
@@ -1901,7 +1899,7 @@ index 000000000..1f80786e0
 +    Uint32 samples;
 +
 +    SDL_AudioFormat og_format = _this->spec.format;
-+    SDL_LogDebug(SDL_LOG_CATEGORY_AUDIO, "Requested format: %x\n", og_format);
++    SDL_LogDebug(SDL_LOG_CATEGORY_AUDIO, "Requested format: %x, channels: %x\n", og_format, _this->spec.channels);
 +
 +    // Ensure giving in a correct format
 +    if (SDL_AUDIO_ISBIGENDIAN(_this->spec.format))
@@ -1910,7 +1908,7 @@ index 000000000..1f80786e0
 +    is_floating = SDL_AUDIO_ISFLOAT(_this->spec.format) != 0;
 +    is_singed = SDL_AUDIO_ISSIGNED(_this->spec.format) != 0;
 +    bit_depth = SDL_AUDIO_BITSIZE(_this->spec.format);
-+    channels = (_this->spec.channels == 1 || _this->spec.channels == 2) ? _this->spec.channels : 2;
++    channels = 2;
 +    freq = (_this->spec.freq >= 1000) ? _this->spec.freq : 44100;
 +    samples = (_this->spec.samples >= 100) ? _this->spec.samples*channels : freq * channels;
 +
@@ -1923,6 +1921,10 @@ index 000000000..1f80786e0
 +        bit_depth = 32;
 +        _this->spec.format = AUDIO_F32LSB;
 +    }
++
++    _this->spec.channels = channels;
++    _this->spec.freq = freq;
++    _this->spec.samples = samples / channels;
 +
 +    if (og_format != _this->spec.format)
 +        SDL_LogWarn(SDL_LOG_CATEGORY_AUDIO, "format %x != requested %x, FIXME: May be UB\n", _this->spec.format, og_format);
@@ -1953,6 +1955,7 @@ index 000000000..1f80786e0
 +static void SAFAAUD_PlayDevice(_THIS) {
 +    SAFAAUD_stream_sync_all(_this->hidden);
 +}
++
 +
 +static SDL_bool SAFAAUD_Init(SDL_AudioDriverImpl *impl)
 +{
