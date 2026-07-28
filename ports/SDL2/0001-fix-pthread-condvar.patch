@@ -1,0 +1,79 @@
+From c18dc9ac34166d6c82cfdd69252a7a793abdb0df Mon Sep 17 00:00:00 2001
+From: safiworks <116169309+safiworks@users.noreply.github.com>
+Date: Tue, 28 Jul 2026 23:54:08 +0300
+Subject: [PATCH] fix(thread/pthread): condvars didn't respect
+ FAKE_RECURSIVE_MUTEX
+
+---
+ src/thread/pthread/SDL_syscond.c    | 12 +++++++++---
+ src/thread/pthread/SDL_sysmutex.c   | 10 ++++++++++
+ src/thread/pthread/SDL_sysmutex_c.h |  2 ++
+ 3 files changed, 21 insertions(+), 3 deletions(-)
+
+diff --git a/src/thread/pthread/SDL_syscond.c b/src/thread/pthread/SDL_syscond.c
+index a4f7b00576..3755362f0a 100644
+--- a/src/thread/pthread/SDL_syscond.c
++++ b/src/thread/pthread/SDL_syscond.c
+@@ -127,8 +127,8 @@ tryagain:
+         /* break; -Wunreachable-code-break */
+     case ETIMEDOUT:
+         retval = SDL_MUTEX_TIMEDOUT;
+-        break;
+     case 0:
++        SDL_MutexTakeOwnership(mutex);
+         break;
+     default:
+         retval = SDL_SetError("pthread_cond_timedwait() failed");
+@@ -143,8 +143,14 @@ int SDL_CondWait(SDL_cond *cond, SDL_mutex *mutex)
+ {
+     if (!cond) {
+         return SDL_InvalidParamError("cond");
+-    } else if (pthread_cond_wait(&cond->cond, &mutex->id) != 0) {
+-        return SDL_SetError("pthread_cond_wait() failed");
++    } else  {
++        int ret = pthread_cond_wait(&cond->cond, &mutex->id);
++
++        if (ret != 0) {
++            return SDL_SetError("pthread_cond_wait() failed");
++        } else {
++            SDL_MutexTakeOwnership(mutex);
++        }
+     }
+     return 0;
+ }
+diff --git a/src/thread/pthread/SDL_sysmutex.c b/src/thread/pthread/SDL_sysmutex.c
+index 5b809763bc..457387d3b1 100644
+--- a/src/thread/pthread/SDL_sysmutex.c
++++ b/src/thread/pthread/SDL_sysmutex.c
+@@ -39,6 +39,16 @@ struct SDL_mutex
+ #endif
+ };
+ 
++#ifdef FAKE_RECURSIVE_MUTEX
++void SDL_MutexTakeOwnership(SDL_mutex* mutex) {
++    mutex->owner = pthread_self();
++    // This function is called by CondWait and it is UB to recursively CondWait.
++    mutex->recursive = 0;
++}
++#else
++void SDL_MutexTakeOwnership(SDL_mutex* mutex) {}
++#endif
++
+ SDL_mutex *SDL_CreateMutex(void)
+ {
+     SDL_mutex *mutex;
+diff --git a/src/thread/pthread/SDL_sysmutex_c.h b/src/thread/pthread/SDL_sysmutex_c.h
+index a9c05dff45..20bb4fea53 100644
+--- a/src/thread/pthread/SDL_sysmutex_c.h
++++ b/src/thread/pthread/SDL_sysmutex_c.h
+@@ -28,5 +28,7 @@ struct SDL_mutex
+     pthread_mutex_t id;
+ };
+ 
++void SDL_MutexTakeOwnership(SDL_mutex* mutex);
++
+ #endif /* SDL_mutex_c_h_ */
+ /* vi: set ts=4 sw=4 expandtab: */
+-- 
+2.54.0
+

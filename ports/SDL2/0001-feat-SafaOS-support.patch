@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 8e5fb1c5bf..f4280e628f 100644
+index 8e5fb1c5bf..7d5696e933 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -84,7 +84,7 @@ include(${SDL2_SOURCE_DIR}/cmake/CheckCPUArchitecture.cmake)
@@ -85,13 +85,12 @@ index 8e5fb1c5bf..f4280e628f 100644
          list(APPEND EXTRA_LIBS m)
        endif()
      endif()
-@@ -1411,7 +1411,39 @@ if(ANDROID)
+@@ -1411,7 +1411,38 @@ if(ANDROID)
    if(SDL_CLOCK_GETTIME)
      set(HAVE_CLOCK_GETTIME 1)
    endif()
 +elseif(SAFAOS)
 +  list(APPEND EXTRA_LIBS SafaSDL)
-+  list(APPEND EXTRA_LIBS c)
 +
 +
 +  file(GLOB SAFAOS_MAIN_SOURCES ${SDL2_SOURCE_DIR}/src/main/safaos/*.c)
@@ -125,7 +124,7 @@ index 8e5fb1c5bf..f4280e628f 100644
  elseif(EMSCRIPTEN)
    # Hide noisy warnings that intend to aid mostly during initial stages of porting a new
    # project. Uncomment at will for verbose cross-compiling -I/../ path info.
-@@ -1482,30 +1514,30 @@ elseif(EMSCRIPTEN)
+@@ -1482,30 +1513,30 @@ elseif(EMSCRIPTEN)
  elseif(UNIX AND NOT APPLE AND NOT RISCOS AND NOT HAIKU)
    if(SDL_AUDIO)
      if(SYSV5 OR SOLARIS OR HPUX)
@@ -177,7 +176,7 @@ index 8e5fb1c5bf..f4280e628f 100644
      endif()
      CheckOSS()
      CheckALSA()
-@@ -1822,7 +1854,7 @@ elseif(WINDOWS)
+@@ -1822,7 +1853,7 @@ elseif(WINDOWS)
    # Check for DirectX
    if(SDL_DIRECTX)
      if(DEFINED MSVC_VERSION AND NOT ${MSVC_VERSION} LESS 1700)
@@ -186,7 +185,7 @@ index 8e5fb1c5bf..f4280e628f 100644
      endif()
      if(NOT MINGW AND NOT USE_WINSDK_DIRECTX)
        if("$ENV{DXSDK_DIR}" STREQUAL "")
-@@ -1849,7 +1881,7 @@ elseif(WINDOWS)
+@@ -1849,7 +1880,7 @@ elseif(WINDOWS)
      if(HAVE_D3D_H OR HAVE_D3D11_H OR HAVE_D3D12_H OR HAVE_DDRAW_H OR HAVE_DSOUND_H OR HAVE_DINPUT_H)
        set(HAVE_DIRECTX TRUE)
        if(NOT MINGW AND NOT USE_WINSDK_DIRECTX)
@@ -195,7 +194,7 @@ index 8e5fb1c5bf..f4280e628f 100644
          file(TO_CMAKE_PATH "$ENV{DXSDK_DIR}\\lib\\${PROCESSOR_ARCH}" SDL2_TMP_DXSDK_LIB_DIR)
          target_link_directories(sdl-build-options INTERFACE "${SDL2_TMP_DXSDK_LIB_DIR}")
          file(TO_CMAKE_PATH "$ENV{DXSDK_DIR}\\Include" SDL2_TMP_DXSDK_INCLUDE_DIR)
-@@ -2670,25 +2702,25 @@ elseif(VITA)
+@@ -2670,25 +2701,25 @@ elseif(VITA)
    endif()
  
    set(HAVE_ARMSIMD TRUE)
@@ -232,7 +231,7 @@ index 8e5fb1c5bf..f4280e628f 100644
  
    if(SDL_AUDIO)
      set(SDL_AUDIO_DRIVER_PSP 1)
-@@ -3240,51 +3272,51 @@ configure_file("${SDL2_SOURCE_DIR}/SDL2.spec.in"
+@@ -3240,51 +3271,51 @@ configure_file("${SDL2_SOURCE_DIR}/SDL2.spec.in"
    "${SDL2_BINARY_DIR}/SDL2.spec" @ONLY)
  
  macro(check_add_debug_flag FLAG SUFFIX)
@@ -315,7 +314,7 @@ index 8e5fb1c5bf..f4280e628f 100644
  endmacro()
  
  # enable AddressSanitizer if supported
-@@ -3369,7 +3401,7 @@ message(STATUS "")
+@@ -3369,7 +3400,7 @@ message(STATUS "")
  message(STATUS " Build Shared Library: ${SDL_SHARED}")
  message(STATUS " Build Static Library: ${SDL_STATIC}")
  if(SDL_STATIC)
@@ -324,7 +323,7 @@ index 8e5fb1c5bf..f4280e628f 100644
  endif()
  message(STATUS "")
  if(UNIX)
-@@ -3749,11 +3781,11 @@ if(NOT SDL2_DISABLE_INSTALL)
+@@ -3749,11 +3780,11 @@ if(NOT SDL2_DISABLE_INSTALL)
        set(SOEXT ${CMAKE_SHARED_LIBRARY_SUFFIX}) # ".so", ".dylib", etc.
        get_target_property(SONAME SDL2 OUTPUT_NAME)
        if(NOT ANDROID AND NOT MINGW AND NOT OS2)
@@ -2407,10 +2406,10 @@ index e4f54c65ce..66b976ceba 100644
  #endif
 diff --git a/src/video/safaos/SDL_safaosvideo.c b/src/video/safaos/SDL_safaosvideo.c
 new file mode 100644
-index 0000000000..404c83ee96
+index 0000000000..6b0ba4a10d
 --- /dev/null
 +++ b/src/video/safaos/SDL_safaosvideo.c
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,169 @@
 +
 +/*
 +  Simple DirectMedia Layer
@@ -2539,6 +2538,11 @@ index 0000000000..404c83ee96
 +    SAFAVID_set_window_title(_this->driverdata, window, window->title);
 +}
 +
++static void SAFA_RecreateWindow(_THIS, SDL_Window *window) {
++    SAFA_DestroyWindow(_this, window);
++    SAFA_CreateWindow(_this, window);
++}
++
 +static SDL_VideoDevice *SAFA_CreateDevice(void)
 +{
 +    SDL_VideoDevice *device;
@@ -2561,6 +2565,7 @@ index 0000000000..404c83ee96
 +    device->DestroyWindowFramebuffer = SAFA_DestroyWindowFramebuffer;
 +    device->SetWindowTitle = SAFA_SetWindowTitle;
 +    device->WaitEventTimeout = SAFA_WaitEventsTimeout;
++    device->SetWindowSize = SAFA_RecreateWindow;
 +
 +    device->free = SAFA_DeleteDevice;
 +
