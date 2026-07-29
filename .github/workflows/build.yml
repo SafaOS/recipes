@@ -44,7 +44,7 @@ jobs:
           name: out-aarch64
           path: out/
   release:
-    needs: [build-x86, build-aarch64]
+    needs: [build-x86]
     runs-on: ubuntu-latest
     permissions:
       contents: write
