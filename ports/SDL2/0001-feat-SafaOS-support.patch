@@ -2406,10 +2406,10 @@ index e4f54c65ce..66b976ceba 100644
  #endif
 diff --git a/src/video/safaos/SDL_safaosvideo.c b/src/video/safaos/SDL_safaosvideo.c
 new file mode 100644
-index 0000000000..6b0ba4a10d
+index 0000000000..730cad666c
 --- /dev/null
 +++ b/src/video/safaos/SDL_safaosvideo.c
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,171 @@
 +
 +/*
 +  Simple DirectMedia Layer
@@ -2541,6 +2541,8 @@ index 0000000000..6b0ba4a10d
 +static void SAFA_RecreateWindow(_THIS, SDL_Window *window) {
 +    SAFA_DestroyWindow(_this, window);
 +    SAFA_CreateWindow(_this, window);
++
++    window->surface_valid = SDL_FALSE;
 +}
 +
 +static SDL_VideoDevice *SAFA_CreateDevice(void)
