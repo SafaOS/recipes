@@ -17,4 +17,6 @@ rm sysroot || true
 ln -s $build_sysroot ./sysroot
 make -f Makefile.safaOS distclean
 make -f Makefile.safaOS -j 4
+
+mkdir -p $output_prefix || true
 cp build/butterscotch $output_prefix
