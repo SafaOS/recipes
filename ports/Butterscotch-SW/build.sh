@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 set -eou pipefail
 
 build_sdl2() {
@@ -8,7 +10,7 @@ build_sdl2() {
 
 
 og_work_dir=$(pwd)
-INSTALL_ONLY=1 build_sdl2 || INSTALL_ONLY="0" build_sdl2
+build_sdl2
 
 
 rm sysroot || true
